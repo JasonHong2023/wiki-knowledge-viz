@@ -1,0 +1,15 @@
+{
+  "name": "llm-wiki",
+  "label": "Wiki",
+  "description": "LLM-powered wiki with URL import, YouTube/GitHub support, tag management, knowledge graph, and GitHub sync backup.",
+  "icon": "BookOpen",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/wiki",
+    "override": "/wiki",
+    "position": "after:files"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

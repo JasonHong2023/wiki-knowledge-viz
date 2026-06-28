@@ -1,0 +1,11 @@
+trafilatura>=2.0
+html2text
+yt-dlp
+youtube-transcript-api
+PyMuPDF
+python-pptx
+openpyxl
+pytesseract
+Pillow
+PyYAML
+requests
