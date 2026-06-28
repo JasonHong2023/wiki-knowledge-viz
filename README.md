@@ -48,6 +48,28 @@ npm run build
 
 ---
 
+## 平台支援
+
+| 平台 | 支援狀態 | 備註 |
+|------|----------|------|
+| Linux | ✅ 完整支援 | 主要開發與測試環境 |
+| macOS | ✅ 完整支援 | bash、fcntl、rsync 均原生可用 |
+| Windows（原生） | ❌ 不支援 | `fcntl` 系統呼叫不存在，無法執行 |
+| Windows + WSL | ✅ 可用 | 在 WSL 環境內等同 Linux，完整支援 |
+
+### Windows 使用者
+
+請先安裝 WSL（Windows Subsystem for Linux），再於 WSL 終端機內執行所有指令：
+
+```powershell
+# 在 PowerShell 安裝 WSL（Ubuntu）
+wsl --install
+```
+
+安裝完成後，在 WSL 終端機內照正常流程操作即可。
+
+---
+
 ## 前置需求
 
 | 項目 | 版本要求 | 備註 |
@@ -60,7 +82,7 @@ npm run build
 ### 安裝 tesseract（OCR 支援）
 
 ```bash
-# Ubuntu / Debian
+# Ubuntu / Debian / WSL
 sudo apt install tesseract-ocr tesseract-ocr-chi-tra tesseract-ocr-eng
 
 # macOS
