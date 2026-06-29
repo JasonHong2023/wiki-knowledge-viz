@@ -14,6 +14,9 @@
 - **P2 #4** vite build --watch 開發流程確認可用
 - **P2 #5** 新增 WikiRefreshContext（plugin 內建 context，取代 prop drilling）
 - **P2 #6** 新增 Markdown 元件（marked），WikiPageDetail 改用 Markdown 渲染
+- **F1 #9** 關鍵字權重知識圖譜（節點大小=被引用次數，連線粗細=共享標籤數）
+- **F1 #10** FIRE 四向表格（LLM 生成 Fact/Index/Relation/Encyclopedia，整合進頁面詳情）
+- **F1 #11** HTML/JSON 匯出（Pages 頁加匯出按鈕，支援全部或指定頁面）
 
 ---
 
