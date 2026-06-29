@@ -1,6 +1,6 @@
 # LLM-Wiki Plugin 使用手冊
 
-> 版本：v2.1（2026-06-29）  
+> 版本：v2.2（2026-06-29）  
 > 對應功能：Overview / Pages / Cards / Mandalart / Tars / Upload / Tags / Graph / GitHub
 
 ---
@@ -234,10 +234,10 @@ $WIKI_PATH/
 
 ### 工作原理
 
-1. 你的問題 → 關鍵字萃取
+1. 你的問題 → 關鍵字萃取（中文自動拆 bigram/trigram，英文空白切詞）
 2. 對 Wiki 所有文章進行評分（標題命中 ×3，標籤命中 ×2，內文命中 ×1）
 3. **GraphRAG 擴展**：取高分文章的 1-hop wikilink 鄰居補充脈絡
-4. 彙整上下文傳給 LLM → 生成回答
+4. 彙整上下文傳給 LLM → 生成回答（**預設繁體中文**）
 5. 回答下方顯示來源文章引用
 
 ### 語言設定
@@ -297,10 +297,13 @@ $WIKI_PATH/
 |------|------|
 | `.md` / `.markdown` | 直接解析 Markdown |
 | `.txt` | 純文字，直接讀取為筆記內容 |
-| `.pdf` | 使用 PyMuPDF 萃取文字 |
-| `.pptx` | 使用 python-pptx 萃取各頁文字 |
-| `.xlsx` | 表格轉 Markdown |
-| `.png` / `.jpg` / `.jpeg` / `.gif` / `.webp` | OCR 辨識文字 |
+| `.epub` | 電子書，**自動以書名為檔名**轉成 `.md` 存入 concepts/ |
+| `.pdf` | 使用 PyMuPDF 萃取文字，轉 `.md` 存入 concepts/ |
+| `.pptx` | 使用 python-pptx 萃取各頁文字，轉 `.md` 存入 concepts/ |
+| `.xlsx` | 表格轉 Markdown，存入 concepts/ |
+| `.png` / `.jpg` / `.jpeg` / `.gif` / `.webp` | OCR 辨識文字，存入 images/ |
+
+> **注意**：`.epub` / `.pdf` / `.pptx` / `.xlsx` 上傳後，系統會解析內容並轉存為 `.md` 格式（非原始檔案），才會出現在 Pages 頁面。EPUB 會自動從 metadata 讀取書名作為檔名。
 
 **Type 選單**：
 
@@ -418,6 +421,8 @@ $WIKI_PATH/
 | Wiki 分頁不出現 | 確認 `plugins/llm-wiki/dashboard/dist/index.js` 存在；若無，執行 `cd dashboard && npm run build` |
 | 503 Wiki is not configured | 設定 `WIKI_PATH` 環境變數或 `~/.hermes/config.yaml` |
 | 匯入失敗（PDF/PPT） | `pip install PyMuPDF python-pptx` |
+| 匯入失敗（EPUB） | `pip install ebooklib html2text` |
+| EPUB 上傳後 Pages 看不到 | 確認伺服器版本 ≥ v2.2；舊版直存 `.epub` 不會出現在 Pages |
 | OCR 無結果 | `sudo apt install tesseract-ocr tesseract-ocr-chi-tra` |
 | 頁面顯示舊資料 | 重啟伺服器後按 Ctrl+Shift+R |
 | LLM 標籤未生效 | 確認 Hermes 已設定 API key（Settings → LLM Providers）|

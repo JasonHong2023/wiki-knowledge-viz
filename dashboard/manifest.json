@@ -6,10 +6,9 @@
   "version": "1.0.0",
   "tab": {
     "path": "/wiki",
-    "override": "/wiki",
     "position": "after:files"
   },
   "entry": "dist/index.js",
-  "css": "dist/style.css",
+  "css": "dist/hermes-llm-wiki.css",
   "api": "plugin_api.py"
 }

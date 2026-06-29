@@ -2,7 +2,13 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react({
+      // Classic JSX: compiles <X> → React.createElement(X, …)
+      // so we can just alias "react" to the host SDK's React object.
+      jsxRuntime: "classic",
+    }),
+  ],
   build: {
     lib: {
       entry: "src/index.tsx",
@@ -14,19 +20,16 @@ export default defineConfig({
     minify: false,
     cssCodeSplit: false,
     rollupOptions: {
-      external: ["react", "react/jsx-runtime", "react-dom"],
+      external: ["react", "react-dom"],
       output: {
         globals: {
           react: "__sdk_react",
-          "react/jsx-runtime": "__sdk_jsx",
           "react-dom": "__sdk_react",
         },
+        // Expose the host's React as the global `React` variable that
+        // classic JSX (React.createElement) expects.
         banner: `var __sdk_react = (window.__HERMES_PLUGIN_SDK__ && window.__HERMES_PLUGIN_SDK__.React) || {};
-var __sdk_jsx = {
-  jsx: __sdk_react.createElement,
-  jsxs: __sdk_react.createElement,
-  Fragment: __sdk_react.Fragment,
-};`,
+var React = __sdk_react;`,
       },
     },
   },

@@ -1,7 +1,7 @@
 # LLM-Wiki Plugin — 待處理事項
 
 > 記錄時間：2026-06-29  
-> 最後更新：2026-06-29  
+> 最後更新：2026-06-29（v2.2）  
 > 狀態：P0~P2 技術債已清理，P3 觀察中，F1~F3 全部完成
 
 ---
@@ -140,6 +140,9 @@
 
 ## 🟣 F2 — 新功能：中價值（需要新 UI）
 
+- **v2.2** EPUB 上傳支援（ebooklib + html2text，書名當檔名，轉 `.md` 存 concepts/）✅
+- **v2.2** PDF / PPTX / XLSX 上傳改為解析後存 `.md`（確保 Pages 可見）✅
+- **v2.2** Tars system prompt 改繁體中文，CJK bigram/trigram tokenizer 修正中文 RAG 命中率 ✅
 - **F2 #12** Hypercard 卡片視圖（Cards tab，格狀卡片、搜尋、類型篩選、展開詳情）✅
 - **F2 #13** Luhmann 編號索引（Pages tab，可展開/收合分類樹，搜尋，Luhmann ID，合併舊 WikiPageList）✅
 - **F3 #14** iMandalart 九宮格（Mandalart tab，可建立多個看板、點格子編輯、匯出 MD/PNG/PPTX/XLSX）✅

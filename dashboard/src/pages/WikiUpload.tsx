@@ -528,7 +528,7 @@ export default function WikiUpload({ onRefresh }: { onRefresh: () => void }) {
               </label>
               <input
                 type="file"
-                accept=".md,.markdown,.txt,.pdf,.pptx,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
+                accept=".md,.markdown,.txt,.epub,.pdf,.pptx,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 className="w-full text-sm"
                 style={{ fontSize: 13 }}

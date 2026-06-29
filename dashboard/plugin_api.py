@@ -1168,30 +1168,90 @@ async def upload_file(file: UploadFile = File(...), type: str = Query("auto"), f
     from hermes_cli.language_detector import LanguageDetector
     from hermes_cli.content_tag_analyzer import ContentTagAnalyzer
     from hermes_cli.tag_registry_updater import TagRegistryUpdater
+    import tempfile as _tempfile
 
     parser = _get_parser()
     if not parser.is_available():
         raise HTTPException(503, "Wiki is not configured.")
     if not file.filename:
         raise HTTPException(400, "No filename provided.")
-    supported_extensions = ['.md', '.markdown', '.txt', '.pdf', '.pptx', '.xlsx', '.png', '.jpg', '.jpeg', '.gif', '.webp']
+    supported_extensions = ['.md', '.markdown', '.txt', '.epub', '.pdf', '.pptx', '.xlsx', '.png', '.jpg', '.jpeg', '.gif', '.webp']
     file_ext = '.' + file.filename.split('.')[-1].lower()
     if file_ext not in supported_extensions:
         raise HTTPException(400, f"Unsupported file format: {file_ext}")
     content = await file.read()
+
     image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
-    dest_dir = parser.wiki_path / ("images" if file_ext in image_extensions else "concepts")
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / file.filename
-    if dest.exists() and force.lower() not in ("1", "true", "yes"):
-        rel = str(dest.relative_to(parser.wiki_path))
-        raise HTTPException(409, {"conflict": True, "existing_path": rel, "message": f"檔案 {rel} 已存在"})
-    dest.write_bytes(content)
+    md_extensions = {'.md', '.markdown', '.txt'}
+    # Non-MD non-image formats need conversion to .md first
+    convert_extensions = {'.epub', '.pdf', '.pptx', '.xlsx'}
+
+    if file_ext in image_extensions:
+        # Images saved directly to images/
+        dest_dir = parser.wiki_path / "images"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / file.filename
+        if dest.exists() and force.lower() not in ("1", "true", "yes"):
+            rel = str(dest.relative_to(parser.wiki_path))
+            raise HTTPException(409, {"conflict": True, "existing_path": rel, "message": f"檔案 {rel} 已存在"})
+        dest.write_bytes(content)
+        _invalidate_parser()
+        display_name = file.filename
+    elif file_ext in convert_extensions:
+        # Convert to Markdown first, save as .md using extracted title
+        tmp_fd, tmp_path_str = _tempfile.mkstemp(suffix=file_ext)
+        try:
+            import os as _os
+            _os.write(tmp_fd, content)
+            _os.close(tmp_fd)
+            extracted_text = ContentExtractor().extract(Path(tmp_path_str))
+        except Exception as e:
+            raise HTTPException(400, f"Failed to extract content: {e}")
+        finally:
+            try: Path(tmp_path_str).unlink()
+            except: pass
+
+        # Get title from first H1 heading in extracted text
+        book_title = ""
+        for line in extracted_text.split('\n'):
+            stripped = line.strip()
+            if stripped.startswith('# '):
+                book_title = stripped[2:].strip()
+                break
+        if not book_title:
+            book_title = Path(file.filename).stem
+
+        safe = re.sub(r'[-\s]+', '_', re.sub(r'[^\w\s一-鿿㐀-䶿-]', '', book_title).strip())[:80]
+        md_filename = f"{safe}.md" if safe else "imported.md"
+
+        dest_dir = parser.wiki_path / "concepts"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / md_filename
+        if dest.exists() and force.lower() not in ("1", "true", "yes"):
+            rel = str(dest.relative_to(parser.wiki_path))
+            raise HTTPException(409, {"conflict": True, "existing_path": rel, "message": f"檔案 {rel} 已存在"})
+        counter = 1
+        while dest.exists():
+            dest = dest_dir / f"{md_filename[:-3]}_{counter}.md"; counter += 1
+        dest.write_text(extracted_text, encoding='utf-8')
+        content = extracted_text.encode('utf-8')  # use MD size for threshold
+        display_name = md_filename
+    else:
+        # .md / .markdown / .txt — save as-is
+        dest_dir = parser.wiki_path / "concepts"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / file.filename
+        if dest.exists() and force.lower() not in ("1", "true", "yes"):
+            rel = str(dest.relative_to(parser.wiki_path))
+            raise HTTPException(409, {"conflict": True, "existing_path": rel, "message": f"檔案 {rel} 已存在"})
+        dest.write_bytes(content)
+        display_name = file.filename
+
     _invalidate_parser()
     if len(content) > _LARGE_FILE_THRESHOLD:
         tracker = _get_tracker()
-        task_id = tracker.create_task(file.filename)
-        threading.Thread(target=_run_analysis_background, args=(tracker, task_id, parser, dest, type, file.filename), daemon=True).start()
+        task_id = tracker.create_task(display_name)
+        threading.Thread(target=_run_analysis_background, args=(tracker, task_id, parser, dest, type, display_name), daemon=True).start()
         return {"status": "processing", "task_id": task_id, "message": "Large file — analysis started in background"}
     try:
         extracted_text = ContentExtractor().extract(dest)
@@ -1207,13 +1267,13 @@ async def upload_file(file: UploadFile = File(...), type: str = Query("auto"), f
         _update_frontmatter_tags(dest, tags_result['suggested_tags'], page_type=tags_result.get("suggested_category", type) or "concept", confidence=tags_result.get("confidence", "medium"))
         _auto_link_related_pages(dest, parser, tags_result['suggested_tags'])
         parser.invalidate()
-        _append_to_log(parser, "create", file.filename, f"Uploaded; tags={','.join(tags_result['suggested_tags'][:5])}")
+        _append_to_log(parser, "create", display_name, f"Uploaded from {file.filename}; tags={','.join(tags_result['suggested_tags'][:5])}")
         return {"path": str(dest.relative_to(parser.wiki_path)), "message": "File uploaded and analyzed successfully",
                 "data": {"languages": lang_info.get('languages', []), "programming_languages": lang_info.get('programming_languages', []),
                          "domain": lang_info.get('domain', 'general'), "tags": tags_result['suggested_tags'],
                          "category": tags_result['suggested_category'], "confidence": tags_result['confidence']}}
     except Exception as e:
-        _log.error("Analysis failed for %s: %s", file.filename, e)
+        _log.error("Analysis failed for %s: %s", display_name, e)
         return {"path": str(dest.relative_to(parser.wiki_path)), "message": "File uploaded, but auto-analysis failed",
                 "data": {"languages": [], "tags": [], "error": str(e)}}
 
@@ -1974,13 +2034,28 @@ def _resolve_wikilinks(content: str, all_pages: list[dict]) -> list[dict]:
     return result
 
 
+def _tokenize_query(text: str) -> set[str]:
+    """英文用空白切詞；中文補 2-gram / 3-gram，確保中文關鍵字能命中頁面。"""
+    tokens: set[str] = set()
+    # 空白切詞（英文 / 夾雜英文）
+    for w in re.sub(r'[^\w\s]', ' ', text.lower()).split():
+        if len(w) > 1:
+            tokens.add(w)
+    # CJK n-gram
+    for chunk in re.findall(r'[一-鿿㐀-䶿豈-﫿]+', text):
+        for i in range(len(chunk) - 1):
+            tokens.add(chunk[i:i+2])   # bigram
+        for i in range(len(chunk) - 2):
+            tokens.add(chunk[i:i+3])   # trigram
+    return tokens
+
 def _retrieve_wiki_context(question: str, max_pages: int = 5) -> list[dict]:
     """GraphRAG：關鍵字評分取 Top-3 直接命中，再沿 wikilink 擴展 1-hop 補充脈絡。"""
     parser = _get_parser()
     if not parser or not parser.is_available():
         return []
 
-    words = {w for w in re.sub(r'[^\w\s]', ' ', question.lower()).split() if len(w) > 1}
+    words = _tokenize_query(question)
     all_pages = parser.get_pages()
 
     # ── Phase 1：關鍵字評分 ────────────────────────────────────────────────
@@ -2054,19 +2129,24 @@ async def tars_chat(req: TarsChatRequest) -> dict:
 
     lang = req.lang if req.lang in _LANG_INSTRUCTIONS else "auto"
     if lang == "auto":
-        lang_instruction = "Detect the language of the user's question and reply in the same language."
+        # 含 CJK 字元 → 繁體中文；否則跟問題語言走
+        if re.search(r'[一-鿿㐀-䶿]', req.message):
+            lang_instruction = _LANG_INSTRUCTIONS["zh-TW"]
+        else:
+            lang_instruction = "以使用者問題的語言回答。"
     else:
         lang_instruction = _LANG_INSTRUCTIONS[lang]
 
-    system_prompt = f"""You are Tars, an AI assistant who knows this personal wiki well.
-The context below uses two source types:
-- 【直接相關】: pages directly matched by keywords — treat as primary reference
-- 【圖譜延伸】: pages connected via knowledge graph (wikilinks) — use for background context
-When answering:
-1. Prioritize 【直接相關】 content; use 【圖譜延伸】 for broader context and connections
-2. If the wiki has no relevant content, say so and supplement with your general knowledge
-3. Be concise and focused
-4. If citing sources, list them at the end as [Source: page name]
+    system_prompt = f"""你是 Tars，一位熟悉使用者個人知識庫的 AI 助手。
+以下脈絡分為兩種來源：
+- 【直接相關】：關鍵字直接命中的頁面，作為主要參考
+- 【圖譜延伸】：透過 wikilink 連結的頁面，補充背景脈絡
+
+回答原則：
+1. 優先使用【直接相關】內容；以【圖譜延伸】補充廣度與關聯
+2. 若知識庫無相關內容，直接說明並以一般知識補充
+3. 回答簡潔精確，切中要點
+4. 引用來源時，在末尾列出 [來源：頁面名稱]
 5. {lang_instruction}"""
 
     user_content = req.message
