@@ -2,10 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { Bot, Send, User, RefreshCw, BookOpen, Trash2, Languages } from "lucide-react";
 import { wiki } from "../api";
 
+interface Source { path: string; title: string; rag_type?: "direct" | "graph"; }
+
 interface Message {
   role: "user" | "assistant";
   content: string;
-  sources?: { path: string; title: string }[];
+  sources?: Source[];
   loading?: boolean;
 }
 
@@ -204,16 +206,27 @@ export default function WikiTars({ onNavigate }: { onNavigate: (tab: any, path?:
 
               {m.sources && m.sources.length > 0 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                  {m.sources.map(s => (
-                    <button
-                      key={s.path}
-                      onClick={() => onNavigate("pages", s.path)}
-                      style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 9999, background: "rgba(99,102,241,0.1)", color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.2)", cursor: "pointer" }}
-                    >
-                      <BookOpen style={{ width: 10, height: 10 }} />
-                      {s.title.length > 24 ? s.title.slice(0, 24) + "…" : s.title}
-                    </button>
-                  ))}
+                  {m.sources.map(s => {
+                    const isGraph = s.rag_type === "graph";
+                    return (
+                      <button
+                        key={s.path}
+                        onClick={() => onNavigate("index", s.path)}
+                        title={isGraph ? "圖譜延伸：透過 wikilink 關聯找到" : "直接命中"}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 4, fontSize: 11,
+                          padding: "2px 8px", borderRadius: 9999, cursor: "pointer",
+                          background: isGraph ? "rgba(52,211,153,0.08)" : "rgba(99,102,241,0.1)",
+                          color: isGraph ? "#6ee7b7" : "#a5b4fc",
+                          border: `1px solid ${isGraph ? "rgba(52,211,153,0.25)" : "rgba(99,102,241,0.2)"}`,
+                        }}
+                      >
+                        <BookOpen style={{ width: 10, height: 10 }} />
+                        {isGraph && <span style={{ fontSize: 9, opacity: 0.7 }}>↗</span>}
+                        {s.title.length > 24 ? s.title.slice(0, 24) + "…" : s.title}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>

@@ -1162,26 +1162,84 @@ class TarsChatRequest(BaseModel):
     history: list[dict] = []
     lang: str = "auto"  # "auto" | "zh-TW" | "zh-CN" | "en" | "ja"
 
-def _retrieve_wiki_context(question: str, max_pages: int = 4) -> list[dict]:
-    """Keyword-based wiki retrieval for RAG context."""
+def _resolve_wikilinks(content: str, all_pages: list[dict]) -> list[dict]:
+    """將內文中的 [[wikilink]] 解析成實際頁面，用於 GraphRAG 1-hop 擴展。"""
+    refs = re.findall(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]', content)
+    path_map = {p["path"]: p for p in all_pages}
+    slug_map = {p["path"].split("/")[-1].lower(): p for p in all_pages}
+    seen: set[str] = set()
+    result: list[dict] = []
+    for ref in refs:
+        ref = ref.strip()
+        page = path_map.get(ref) \
+            or path_map.get(f"concepts/{ref}") \
+            or slug_map.get(ref.lower().replace(" ", "_"))
+        if page and page["path"] not in seen:
+            seen.add(page["path"])
+            result.append(page)
+    return result
+
+
+def _retrieve_wiki_context(question: str, max_pages: int = 5) -> list[dict]:
+    """GraphRAG：關鍵字評分取 Top-3 直接命中，再沿 wikilink 擴展 1-hop 補充脈絡。"""
     parser = _get_parser()
     if not parser or not parser.is_available():
         return []
-    words = set(re.sub(r'[^\w\s]', ' ', question.lower()).split())
-    words = {w for w in words if len(w) > 1}
-    pages = parser.get_pages()
-    scored = []
-    for p in pages:
-        title = p.get("title", "").lower()
+
+    words = {w for w in re.sub(r'[^\w\s]', ' ', question.lower()).split() if len(w) > 1}
+    all_pages = parser.get_pages()
+
+    # ── Phase 1：關鍵字評分 ────────────────────────────────────────────────
+    scored: list[tuple[float, dict]] = []
+    for p in all_pages:
+        title   = p.get("title", "").lower()
         content = p.get("content", "")[:800].lower()
-        tags = " ".join(p.get("tags", [])).lower()
-        score = sum(1 for w in words if w in title) * 3 \
-              + sum(1 for w in words if w in content) \
-              + sum(1 for w in words if w in tags) * 2
+        tags    = " ".join(p.get("tags", [])).lower()
+        score   = sum(1 for w in words if w in title)   * 3 \
+                + sum(1 for w in words if w in content)     \
+                + sum(1 for w in words if w in tags)    * 2
         if score > 0:
             scored.append((score, p))
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [p for _, p in scored[:max_pages]]
+
+    direct       = [p for _, p in scored[:3]]
+    direct_paths = {p["path"] for p in direct}
+
+    # ── Phase 2：GraphRAG 1-hop 擴展 ──────────────────────────────────────
+    neighbor_pool: dict[str, tuple[float, dict]] = {}
+
+    def _neighbor_score(p: dict) -> float:
+        t = p.get("title", "").lower()
+        c = p.get("content", "")[:800].lower()
+        g = " ".join(p.get("tags", [])).lower()
+        return sum(1 for w in words if w in t) * 1.5 \
+             + sum(1 for w in words if w in c) * 0.5 \
+             + sum(1 for w in words if w in g)
+
+    # 出向連結（直接命中頁面 → 它連到的頁面）
+    for dp in direct:
+        for nb in _resolve_wikilinks(dp.get("content", ""), all_pages):
+            if nb["path"] not in direct_paths and nb["path"] not in neighbor_pool:
+                neighbor_pool[nb["path"]] = (_neighbor_score(nb), nb)
+
+    # 入向連結（哪些頁面連到直接命中頁面）
+    direct_slugs = {p["path"].split("/")[-1] for p in direct}
+    for page in all_pages:
+        if page["path"] in direct_paths or page["path"] in neighbor_pool:
+            continue
+        content = page.get("content", "")
+        if any(slug in content for slug in direct_slugs):
+            neighbor_pool[page["path"]] = (_neighbor_score(page), page)
+
+    neighbors = [p for _, p in sorted(neighbor_pool.values(), key=lambda x: -x[0])[:2]]
+
+    # ── 標記來源類型供 context 格式化使用 ─────────────────────────────────
+    for p in direct:
+        p["_rag_type"] = "direct"
+    for p in neighbors:
+        p["_rag_type"] = "graph"
+
+    return (direct + [nb for nb in neighbors if nb["path"] not in direct_paths])[:max_pages]
 
 @router.post("/tars/chat")
 async def tars_chat(req: TarsChatRequest) -> dict:
@@ -1193,8 +1251,11 @@ async def tars_chat(req: TarsChatRequest) -> dict:
     if sources:
         parts = []
         for p in sources:
-            content = p.get("content", "")[:600]
-            parts.append(f"## {p.get('title', p['path'])}\n{content}")
+            rag_type = p.get("_rag_type", "direct")
+            label    = "【直接相關】" if rag_type == "direct" else "【圖譜延伸】"
+            limit    = 600 if rag_type == "direct" else 300
+            content  = p.get("content", "")[:limit]
+            parts.append(f"## {label} {p.get('title', p['path'])}\n{content}")
         context_text = "\n\n---\n\n".join(parts)
 
     lang = req.lang if req.lang in _LANG_INSTRUCTIONS else "auto"
@@ -1204,8 +1265,11 @@ async def tars_chat(req: TarsChatRequest) -> dict:
         lang_instruction = _LANG_INSTRUCTIONS[lang]
 
     system_prompt = f"""You are Tars, an AI assistant who knows this personal wiki well.
+The context below uses two source types:
+- 【直接相關】: pages directly matched by keywords — treat as primary reference
+- 【圖譜延伸】: pages connected via knowledge graph (wikilinks) — use for background context
 When answering:
-1. Prioritize the wiki content provided as context
+1. Prioritize 【直接相關】 content; use 【圖譜延伸】 for broader context and connections
 2. If the wiki has no relevant content, say so and supplement with your general knowledge
 3. Be concise and focused
 4. If citing sources, list them at the end as [Source: page name]
@@ -1239,7 +1303,10 @@ When answering:
 
     return {
         "answer": answer,
-        "sources": [{"path": p["path"], "title": p.get("title", p["path"])} for p in sources],
+        "sources": [
+            {"path": p["path"], "title": p.get("title", p["path"]), "rag_type": p.get("_rag_type", "direct")}
+            for p in sources
+        ],
     }
 
 # ── GitHub ─────────────────────────────────────────────────────────────────
