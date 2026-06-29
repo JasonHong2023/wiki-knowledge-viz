@@ -4,13 +4,20 @@ import { wiki } from "../api";
 
 type GraphMode = "2d" | "3d";
 
-interface GraphNode { id: string; type: string; title: string; tags: string[]; confidence: string; }
-interface GraphEdge { source: string; target: string; type: string; }
+interface GraphNode { id: string; type: string; title: string; tags: string[]; confidence: string; inbound_count: number; }
+interface GraphEdge { source: string; target: string; type: string; shared_tags: number; }
 interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; }
 interface LayoutNode extends GraphNode { x: number; y: number; z: number; vx: number; vy: number; vz: number; pinned: boolean; }
 
 const NODE_RADIUS = 8, REPULSION = 3000, ATTRACTION = 0.004, DAMPING = 0.85, CENTER_GRAV = 0.004, IDEAL_DIST = 160;
 const REPULSION_3D = 4000, ATTRACTION_3D = 0.004, IDEAL_DIST_3D = 180, FOV_3D = 600, DEPTH_3D = 400;
+
+function nodeRadius(n: GraphNode | LayoutNode): number {
+  return NODE_RADIUS + Math.min((n.inbound_count ?? 0) * 2, 14);
+}
+function edgeWidth(e: GraphEdge): number {
+  return 1 + Math.min((e.shared_tags ?? 0), 5);
+}
 
 const TYPE_COLORS: Record<string, string> = { entity: "#60a5fa", concept: "#34d399", comparison: "#fbbf24" };
 const TYPE_COLORS_3D: Record<string, string> = { entity: "#7dd3fc", concept: "#6ee7b7", comparison: "#fde68a" };
@@ -204,15 +211,18 @@ export default function WikiGraph() {
         const sn=projected.find(p=>p.id===e.source), tn=projected.find(p=>p.id===e.target);
         if (!sn||!tn) continue;
         const isHL = hov===e.source||hov===e.target;
+        const w3d = edgeWidth(e as GraphEdge);
         const grad = ctx.createLinearGradient(sn.sx,sn.sy,tn.sx,tn.sy);
         grad.addColorStop(0,isHL?"rgba(130,180,255,0.35)":"rgba(80,120,200,0.06)");
         grad.addColorStop(.5,isHL?"rgba(150,200,255,0.55)":"rgba(100,150,220,0.13)");
         grad.addColorStop(1,isHL?"rgba(130,180,255,0.35)":"rgba(80,120,200,0.06)");
         ctx.beginPath(); ctx.moveTo(sn.sx,sn.sy); ctx.lineTo(tn.sx,tn.sy);
-        ctx.strokeStyle=grad; ctx.lineWidth=isHL?1.3:0.7; ctx.stroke();
+        ctx.strokeStyle=grad; ctx.lineWidth=isHL?w3d*0.8+0.5:w3d*0.5; ctx.stroke();
       }
       for (const n of sorted) {
-        const color=TYPE_COLORS_3D[n.type]??"#7dd3fc", r=Math.max(4,NODE_RADIUS*n.s*2.6), isHov=n.id===hov, depth=Math.max(0.1,Math.min(1,n.s*2.6));
+        const srcNode = nodes.find(nd=>nd.id===n.id);
+        const baseR = srcNode ? nodeRadius(srcNode) : NODE_RADIUS;
+        const color=TYPE_COLORS_3D[n.type]??"#7dd3fc", r=Math.max(4,baseR*n.s*2.6*0.7), isHov=n.id===hov, depth=Math.max(0.1,Math.min(1,n.s*2.6));
         const coronaR=r*(isHov?5.5:4), corona=ctx.createRadialGradient(n.sx,n.sy,r*.4,n.sx,n.sy,coronaR);
         corona.addColorStop(0,hexAlpha(color,(isHov?0.38:0.16)*depth)); corona.addColorStop(1,hexAlpha(color,0));
         ctx.beginPath(); ctx.arc(n.sx,n.sy,coronaR,0,Math.PI*2); ctx.fillStyle=corona; ctx.fill();
@@ -291,8 +301,14 @@ export default function WikiGraph() {
 
   const handleSVGMouseUp = useCallback(() => { pan2DRef.current.active = false; }, []);
 
-  const hitTest3D = useCallback((mx: number, my: number) =>
-    projectedRef.current.find(({ sx, sy, s }) => { const dx=mx-sx,dy=my-sy; return Math.sqrt(dx*dx+dy*dy)<Math.max(6,NODE_RADIUS*s*2.5)+5; }), []);
+  const hitTest3D = useCallback((mx: number, my: number) => {
+    const nodeMap = new Map((data?.nodes ?? []).map(n => [n.id, n]));
+    return projectedRef.current.find(({ id, sx, sy, s }) => {
+      const base = nodeRadius(nodeMap.get(id) ?? { inbound_count: 0 } as GraphNode);
+      const dx=mx-sx, dy=my-sy;
+      return Math.sqrt(dx*dx+dy*dy) < Math.max(6, base*s*2.5*0.7)+5;
+    });
+  }, [data]);
 
   const handle3DMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = canvasRef.current!.getBoundingClientRect(), hit = hitTest3D(e.clientX-rect.left, e.clientY-rect.top);
@@ -372,6 +388,9 @@ export default function WikiGraph() {
             {type.charAt(0).toUpperCase()+type.slice(1)}
           </span>
         ))}
+        <span className="ml-2 border-l border-current/20 pl-4 flex items-center gap-1.5 text-text-tertiary">
+          節點大小 = 被引用次數 · 連線粗細 = 共享標籤數
+        </span>
       </div>
       <div ref={containerRef} className={`relative flex-1 overflow-hidden rounded-lg border ${mode==="3d"?"border-white/5 bg-[#05050e]":"border-current/10 bg-current/[0.02]"}`} style={{ height: 480 }}>
         <svg ref={svgRef} width="100%" height="100%" className="select-none" style={{ display: mode==="2d"?"block":"none" }}
@@ -380,17 +399,23 @@ export default function WikiGraph() {
           <g data-graph transform={`translate(${offset2D.x},${offset2D.y}) scale(${scale2D})`}>
             {data?.edges.map((edge, i) => {
               const nm=new Map(graphNodes.map(n=>[n.id,n])), src=nm.get(edge.source), tgt=nm.get(edge.target), hl=hoveredNode===edge.source||hoveredNode===edge.target;
-              return <line key={`e-${i}`} data-source={edge.source} data-target={edge.target} x1={src?.x??0} y1={src?.y??0} x2={tgt?.x??0} y2={tgt?.y??0} stroke={hl?"#ffffff":"currentColor"} strokeOpacity={hl?.6:.15} strokeWidth={hl?2:1} />;
+              const w = edgeWidth(edge);
+              return <line key={`e-${i}`} data-source={edge.source} data-target={edge.target} x1={src?.x??0} y1={src?.y??0} x2={tgt?.x??0} y2={tgt?.y??0} stroke={hl?"#ffffff":"currentColor"} strokeOpacity={hl?.7:.18} strokeWidth={hl?w+1:w} />;
             })}
             {graphNodes.map(node => {
-              const isHov=hoveredNode===node.id, color=TYPE_COLORS[node.type]??"#888";
+              const isHov=hoveredNode===node.id, color=TYPE_COLORS[node.type]??"#888", r=nodeRadius(node);
               return (
                 <g key={node.id}>
-                  <circle data-id={node.id} cx={node.x} cy={node.y} r={isHov?NODE_RADIUS+3:NODE_RADIUS} fill={color} fillOpacity={isHov?1:.75}
+                  <circle data-id={node.id} cx={node.x} cy={node.y} r={isHov?r+3:r} fill={color} fillOpacity={isHov?1:.75}
                     stroke={isHov?"#fff":"none"} strokeWidth={2} style={{cursor:"grab"}}
                     onMouseEnter={() => setHoveredNode(node.id)} onMouseLeave={() => setHoveredNode(null)}
                     onMouseDown={e => handleMouseDown2D(node.id, e)} />
-                  {isHov && <text data-id={node.id} x={node.x} y={node.y-NODE_RADIUS-6} textAnchor="middle" fill="currentColor" fontSize={11} className="pointer-events-none">{node.title.length>26?node.title.slice(0,26)+"…":node.title}</text>}
+                  {isHov && (
+                    <text data-id={node.id} x={node.x} y={node.y-r-6} textAnchor="middle" fill="currentColor" fontSize={11} className="pointer-events-none">
+                      {node.title.length>26?node.title.slice(0,26)+"…":node.title}
+                      {node.inbound_count > 0 && ` (←${node.inbound_count})`}
+                    </text>
+                  )}
                 </g>
               );
             })}

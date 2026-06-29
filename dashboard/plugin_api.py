@@ -485,7 +485,22 @@ async def get_graph() -> dict[str, list[dict[str, Any]]]:
     parser = _get_parser()
     if not parser.is_available():
         raise HTTPException(503, "Wiki is not configured.")
-    return parser.get_graph()
+    raw = parser.get_graph()
+    pages = parser.get_pages()
+
+    # 建立 path → tags 對照表，計算節點權重與邊的標籤共享數
+    tag_map: dict[str, set[str]] = {p["path"]: set(p.get("tags", [])) for p in pages}
+    inbound_map: dict[str, int] = {p["path"]: p.get("inbound_link_count", 0) for p in pages}
+
+    for node in raw["nodes"]:
+        node["inbound_count"] = inbound_map.get(node["id"], 0)
+
+    for edge in raw["edges"]:
+        src_tags = tag_map.get(edge["source"], set())
+        tgt_tags = tag_map.get(edge["target"], set())
+        edge["shared_tags"] = len(src_tags & tgt_tags)
+
+    return raw
 
 @router.get("/timeline")
 async def get_timeline(limit: int = Query(20, ge=1, le=500)) -> list[dict[str, Any]]:

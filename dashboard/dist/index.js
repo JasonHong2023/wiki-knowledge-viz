@@ -4113,6 +4113,12 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 	//#region src/pages/WikiGraph.tsx
 	var NODE_RADIUS = 8, REPULSION = 3e3, ATTRACTION = .004, DAMPING = .85, CENTER_GRAV = .004, IDEAL_DIST = 160;
 	var REPULSION_3D = 4e3, ATTRACTION_3D = .004, IDEAL_DIST_3D = 180, FOV_3D = 600, DEPTH_3D = 400;
+	function nodeRadius(n) {
+		return NODE_RADIUS + Math.min((n.inbound_count ?? 0) * 2, 14);
+	}
+	function edgeWidth(e) {
+		return 1 + Math.min(e.shared_tags ?? 0, 5);
+	}
 	var TYPE_COLORS = {
 		entity: "#60a5fa",
 		concept: "#34d399",
@@ -4486,6 +4492,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					const sn = projected.find((p) => p.id === e.source), tn = projected.find((p) => p.id === e.target);
 					if (!sn || !tn) continue;
 					const isHL = hov === e.source || hov === e.target;
+					const w3d = edgeWidth(e);
 					const grad = ctx.createLinearGradient(sn.sx, sn.sy, tn.sx, tn.sy);
 					grad.addColorStop(0, isHL ? "rgba(130,180,255,0.35)" : "rgba(80,120,200,0.06)");
 					grad.addColorStop(.5, isHL ? "rgba(150,200,255,0.55)" : "rgba(100,150,220,0.13)");
@@ -4494,11 +4501,13 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					ctx.moveTo(sn.sx, sn.sy);
 					ctx.lineTo(tn.sx, tn.sy);
 					ctx.strokeStyle = grad;
-					ctx.lineWidth = isHL ? 1.3 : .7;
+					ctx.lineWidth = isHL ? w3d * .8 + .5 : w3d * .5;
 					ctx.stroke();
 				}
 				for (const n of sorted) {
-					const color = TYPE_COLORS_3D[n.type] ?? "#7dd3fc", r = Math.max(4, NODE_RADIUS * n.s * 2.6), isHov = n.id === hov, depth = Math.max(.1, Math.min(1, n.s * 2.6));
+					const srcNode = nodes.find((nd) => nd.id === n.id);
+					const baseR = srcNode ? nodeRadius(srcNode) : NODE_RADIUS;
+					const color = TYPE_COLORS_3D[n.type] ?? "#7dd3fc", r = Math.max(4, baseR * n.s * 2.6 * .7), isHov = n.id === hov, depth = Math.max(.1, Math.min(1, n.s * 2.6));
 					const coronaR = r * (isHov ? 5.5 : 4), corona = ctx.createRadialGradient(n.sx, n.sy, r * .4, n.sx, n.sy, coronaR);
 					corona.addColorStop(0, hexAlpha(color, (isHov ? .38 : .16) * depth));
 					corona.addColorStop(1, hexAlpha(color, 0));
@@ -4662,10 +4671,14 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		const handleSVGMouseUp = (0, react.useCallback)(() => {
 			pan2DRef.current.active = false;
 		}, []);
-		const hitTest3D = (0, react.useCallback)((mx, my) => projectedRef.current.find(({ sx, sy, s }) => {
-			const dx = mx - sx, dy = my - sy;
-			return Math.sqrt(dx * dx + dy * dy) < Math.max(6, NODE_RADIUS * s * 2.5) + 5;
-		}), []);
+		const hitTest3D = (0, react.useCallback)((mx, my) => {
+			const nodeMap = new Map((data?.nodes ?? []).map((n) => [n.id, n]));
+			return projectedRef.current.find(({ id, sx, sy, s }) => {
+				const base = nodeRadius(nodeMap.get(id) ?? { inbound_count: 0 });
+				const dx = mx - sx, dy = my - sy;
+				return Math.sqrt(dx * dx + dy * dy) < Math.max(6, base * s * 2.5 * .7) + 5;
+			});
+		}, [data]);
 		const handle3DMouseDown = (0, react.useCallback)((e) => {
 			const rect = canvasRef.current.getBoundingClientRect(), hit = hitTest3D(e.clientX - rect.left, e.clientY - rect.top);
 			if (hit) {
@@ -4835,15 +4848,18 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			style: { minHeight: 500 },
 			children: [
 				headerBar,
-				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: "mb-3 flex flex-wrap gap-4 text-xs text-text-secondary",
-					children: Object.entries(TYPE_COLORS).map(([type, color]) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+					children: [Object.entries(TYPE_COLORS).map(([type, color]) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
 						className: "flex items-center gap-1.5",
 						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 							className: "inline-block h-2.5 w-2.5 rounded-full",
 							style: { backgroundColor: color }
 						}), type.charAt(0).toUpperCase() + type.slice(1)]
-					}, type))
+					}, type)), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: "ml-2 border-l border-current/20 pl-4 flex items-center gap-1.5 text-text-tertiary",
+						children: "節點大小 = 被引用次數 · 連線粗細 = 共享標籤數"
+					})]
 				}),
 				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					ref: containerRef,
@@ -4870,6 +4886,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 								transform: `translate(${offset2D.x},${offset2D.y}) scale(${scale2D})`,
 								children: [data?.edges.map((edge, i) => {
 									const nm = new Map(graphNodes.map((n) => [n.id, n])), src = nm.get(edge.source), tgt = nm.get(edge.target), hl = hoveredNode === edge.source || hoveredNode === edge.target;
+									const w = edgeWidth(edge);
 									return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("line", {
 										"data-source": edge.source,
 										"data-target": edge.target,
@@ -4878,16 +4895,16 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 										x2: tgt?.x ?? 0,
 										y2: tgt?.y ?? 0,
 										stroke: hl ? "#ffffff" : "currentColor",
-										strokeOpacity: hl ? .6 : .15,
-										strokeWidth: hl ? 2 : 1
+										strokeOpacity: hl ? .7 : .18,
+										strokeWidth: hl ? w + 1 : w
 									}, `e-${i}`);
 								}), graphNodes.map((node) => {
-									const isHov = hoveredNode === node.id, color = TYPE_COLORS[node.type] ?? "#888";
+									const isHov = hoveredNode === node.id, color = TYPE_COLORS[node.type] ?? "#888", r = nodeRadius(node);
 									return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("g", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("circle", {
 										"data-id": node.id,
 										cx: node.x,
 										cy: node.y,
-										r: isHov ? 11 : NODE_RADIUS,
+										r: isHov ? r + 3 : r,
 										fill: color,
 										fillOpacity: isHov ? 1 : .75,
 										stroke: isHov ? "#fff" : "none",
@@ -4896,15 +4913,15 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 										onMouseEnter: () => setHoveredNode(node.id),
 										onMouseLeave: () => setHoveredNode(null),
 										onMouseDown: (e) => handleMouseDown2D(node.id, e)
-									}), isHov && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("text", {
+									}), isHov && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("text", {
 										"data-id": node.id,
 										x: node.x,
-										y: node.y - NODE_RADIUS - 6,
+										y: node.y - r - 6,
 										textAnchor: "middle",
 										fill: "currentColor",
 										fontSize: 11,
 										className: "pointer-events-none",
-										children: node.title.length > 26 ? node.title.slice(0, 26) + "…" : node.title
+										children: [node.title.length > 26 ? node.title.slice(0, 26) + "…" : node.title, node.inbound_count > 0 && ` (←${node.inbound_count})`]
 									})] }, node.id);
 								})]
 							})
