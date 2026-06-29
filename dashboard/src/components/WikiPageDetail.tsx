@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { X, Loader2, FileText, Trash2 } from "lucide-react";
 import { wiki } from "../api";
+import Markdown from "./Markdown";
 
 interface WikiPageData {
   path: string;
@@ -167,9 +168,11 @@ export default function WikiPageDetail({ pagePath, onClose, onDelete }: WikiPage
             <h4 className="mb-1 text-xs font-semibold text-text-secondary">
               Markdown Content
             </h4>
-            <pre className="max-h-96 overflow-auto rounded border border-current/10 p-3 font-mono text-xs leading-relaxed text-text-primary whitespace-pre-wrap break-words">
-              {page.content || <span className="italic text-text-tertiary">(empty)</span>}
-            </pre>
+            <div className="max-h-96 overflow-auto rounded border border-current/10 p-3 text-xs leading-relaxed text-text-primary">
+              {page.content
+                ? <Markdown content={page.content} />
+                : <span className="italic text-text-tertiary">(empty)</span>}
+            </div>
           </div>
         </div>
       )}

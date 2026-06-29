@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { BookOpen, FileText, Upload, Tags, Share2, Github } from "lucide-react";
+import { WikiRefreshProvider, useWikiRefresh } from "./WikiRefreshContext";
 import WikiOverview from "./pages/WikiOverview";
 import WikiPageList from "./pages/WikiPageList";
 import WikiUpload from "./pages/WikiUpload";
@@ -24,11 +25,9 @@ function getInitialTab(): Tab {
   return "overview";
 }
 
-export default function App() {
+function AppInner() {
   const [tab, setTab] = useState<Tab>(getInitialTab);
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  const refresh = () => setRefreshKey((k) => k + 1);
+  const { refreshKey, refresh } = useWikiRefresh();
 
   function navigate(t: Tab) {
     setTab(t);
@@ -46,7 +45,6 @@ export default function App() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-0 pb-8">
-      {/* Tab Nav */}
       <nav className="mb-6 flex gap-1 border-b border-current/10">
         {TABS.map(({ id, label, Icon }) => (
           <button
@@ -64,7 +62,6 @@ export default function App() {
         ))}
       </nav>
 
-      {/* Page Content */}
       <div key={refreshKey}>
         {tab === "overview" && <WikiOverview onNavigate={navigate} />}
         {tab === "pages" && <WikiPageList onNavigate={navigate} onRefresh={refresh} />}
@@ -74,5 +71,13 @@ export default function App() {
         {tab === "github" && <WikiGitHub />}
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <WikiRefreshProvider>
+      <AppInner />
+    </WikiRefreshProvider>
   );
 }

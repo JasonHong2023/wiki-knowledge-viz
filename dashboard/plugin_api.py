@@ -4,6 +4,17 @@ LLM-Wiki Plugin API — Self-contained wiki + GitHub sync backend.
 Mounted at /api/plugins/llm-wiki/ by the Hermes plugin system.
 Provides all wiki endpoints so this plugin works on Hermes instances
 that do not have the built-in wiki router.
+
+hermes_cli 相依模組（最後驗證：2026-06-29）
+  - wiki_parser.py           WikiParser 主解析器
+  - wiki_parser_extensions.py WikiParserAutoAnalysis mixin
+  - content_extractor.py     ContentExtractor 多格式內容萃取
+  - content_tag_analyzer.py  ContentTagAnalyzer LLM 標籤分析
+  - language_detector.py     LanguageDetector 語言偵測
+  - tag_registry_updater.py  TagRegistryUpdater tags.yaml 更新（含 fcntl lock）
+  - analysis_tracker.py      AnalysisTracker 背景任務進度追蹤
+
+Hermes 升級後若 wiki 功能異常，優先確認以上模組的 import 和函數簽名是否改變。
 """
 from __future__ import annotations
 
