@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { X, Loader2, FileText, Trash2 } from "lucide-react";
 import { wiki } from "../api";
 import Markdown from "./Markdown";
+import WikiFirePanel from "./WikiFirePanel";
 
 interface WikiPageData {
   path: string;
@@ -174,6 +175,9 @@ export default function WikiPageDetail({ pagePath, onClose, onDelete }: WikiPage
                 : <span className="italic text-text-tertiary">(empty)</span>}
             </div>
           </div>
+
+          {/* FIRE Analysis */}
+          <WikiFirePanel pagePath={pagePath} />
         </div>
       )}
     </div>

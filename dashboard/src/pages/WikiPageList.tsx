@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, Loader2, Trash2 } from "lucide-react";
+import { FileText, Loader2, Trash2, Download } from "lucide-react";
 import { wiki } from "../api";
 import WikiPageDetail from "../components/WikiPageDetail";
+
+const PLUGIN = "/api/plugins/llm-wiki";
+
+function exportPages(paths: string[], fmt: "html" | "json") {
+  const query = paths.length ? `&paths=${encodeURIComponent(paths.join(","))}` : "";
+  window.open(`${PLUGIN}/export?fmt=${fmt}${query}`, "_blank");
+}
 
 interface WikiPage {
   path: string;
@@ -197,6 +204,23 @@ export default function WikiPageList({
             {pages.length} page{pages.length !== 1 ? "s" : ""}
           </span>
         )}
+        <div className="ml-auto flex items-center gap-1">
+          <span className="text-xs text-text-tertiary mr-1">匯出全部：</span>
+          <button
+            onClick={() => exportPages([], "html")}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-current/10 hover:bg-current/20 transition-colors"
+            title="匯出為 HTML"
+          >
+            <Download className="h-3.5 w-3.5" /> HTML
+          </button>
+          <button
+            onClick={() => exportPages([], "json")}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs bg-current/10 hover:bg-current/20 transition-colors"
+            title="匯出為 JSON"
+          >
+            <Download className="h-3.5 w-3.5" /> JSON
+          </button>
+        </div>
       </div>
     ),
     [loading, pages.length],

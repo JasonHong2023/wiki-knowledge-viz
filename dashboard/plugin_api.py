@@ -462,6 +462,91 @@ async def get_page(path: str) -> dict[str, Any]:
         raise HTTPException(404, f"Page not found: {path}")
     return page
 
+@router.get("/pages/{path:path}/fire")
+async def get_page_fire(path: str) -> dict[str, Any]:
+    """產生頁面的 FIRE 四向表格（Fact / Index / Relation / Encyclopedia）。
+    使用 LLM 從頁面內容萃取結構化知識。
+    """
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    page = parser.get_page(path)
+    if page is None:
+        raise HTTPException(404, f"Page not found: {path}")
+
+    content = page.get("content", "")[:4000]
+    title = page.get("title", path)
+    tags = page.get("tags", [])
+    all_pages = parser.get_pages()
+    related = [p["title"] for p in all_pages if path in p.get("inboundLinks", []) + p.get("outboundLinks", [])]
+
+    prompt = f"""你是知識管理助手。請根據以下 Markdown 文章，輸出 FIRE 四向分析，以 JSON 格式回傳。
+
+文章標題：{title}
+標籤：{', '.join(tags)}
+內容：
+{content}
+
+請輸出：
+{{
+  "fact": ["事實1", "事實2", ...],        // 3~6 條客觀事實陳述
+  "index": ["索引關鍵字1", ...],           // 5~10 個索引關鍵字
+  "relation": ["相關概念1", ...],          // 3~6 個相關概念或連結
+  "encyclopedia": "100~150字的百科摘要"    // 簡短的百科式說明
+}}
+
+只回傳 JSON，不要其他說明。"""
+
+    try:
+        import httpx
+        cfg_path = Path.home() / ".hermes" / "config.yaml"
+        api_key, model, base_url = "", "claude-haiku-4-5-20251001", "https://api.anthropic.com"
+        if cfg_path.exists():
+            import yaml
+            cfg = yaml.safe_load(cfg_path.read_text("utf-8")) or {}
+            prov = (cfg.get("providers") or {})
+            for p in prov.values() if isinstance(prov, dict) else []:
+                if isinstance(p, dict) and p.get("api_key"):
+                    api_key = p["api_key"]
+                    model = p.get("model", model)
+                    base_url = p.get("base_url", base_url).rstrip("/")
+                    break
+
+        if not api_key:
+            api_key = os.getenv("ANTHROPIC_API_KEY", "")
+
+        if not api_key:
+            raise HTTPException(503, "No LLM API key configured.")
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{base_url}/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": model, "max_tokens": 800, "messages": [{"role": "user", "content": prompt}]},
+            )
+            resp.raise_for_status()
+            text = resp.json()["content"][0]["text"].strip()
+            start, end = text.find("{"), text.rfind("}") + 1
+            fire = json.loads(text[start:end]) if start >= 0 else {}
+    except HTTPException:
+        raise
+    except Exception as e:
+        _log.warning("FIRE LLM error: %s", e)
+        fire = {
+            "fact": [f"此頁面包含 {len(content)} 字的內容"],
+            "index": tags[:8],
+            "relation": related[:6],
+            "encyclopedia": f"{title}：{content[:120].strip()}…",
+        }
+
+    return {
+        "path": path,
+        "title": title,
+        "tags": tags,
+        "related_pages": related[:10],
+        "fire": fire,
+    }
+
 @router.delete("/pages/{path:path}")
 async def delete_page(path: str) -> dict[str, str]:
     parser = _get_parser()
@@ -707,6 +792,92 @@ async def import_url(body: ImportUrlRequest) -> dict:
                 "data": {"languages": [], "tags": [], "error": str(e)}}
 
 # ══════════════════════════════════════════════════════════════════════
+# Export endpoints
+# ══════════════════════════════════════════════════════════════════════
+
+from fastapi.responses import HTMLResponse, JSONResponse
+
+_HTML_EXPORT_TEMPLATE = """<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; line-height: 1.7; color: #1a1a1a; }}
+  h1 {{ font-size: 1.6rem; border-bottom: 2px solid #eee; padding-bottom: .5rem; }}
+  h2,h3 {{ margin-top: 1.5rem; }}
+  .meta {{ color: #666; font-size: .85rem; margin-bottom: 1.5rem; }}
+  .tag {{ display: inline-block; background: #f0f0f0; border-radius: 3px; padding: 1px 6px; margin: 0 2px; font-size: .8rem; }}
+  pre {{ background: #f6f8fa; border-radius: 6px; padding: 1rem; overflow-x: auto; }}
+  code {{ background: #f6f8fa; padding: 1px 4px; border-radius: 3px; }}
+  hr {{ border: none; border-top: 1px solid #eee; margin: 2rem 0; }}
+  .toc {{ background: #f9f9f9; border-left: 3px solid #0078d4; padding: .75rem 1rem; margin-bottom: 2rem; }}
+  .toc a {{ color: #0078d4; text-decoration: none; display: block; padding: 1px 0; }}
+</style>
+</head>
+<body>
+{body}
+<hr><p style="color:#999;font-size:.8rem">Exported from LLM-Wiki · {date}</p>
+</body>
+</html>"""
+
+@router.get("/export")
+async def export_pages(
+    paths: str = Query("", description="逗號分隔的頁面路徑，空白=全部"),
+    fmt: str = Query("html", description="html 或 json"),
+) -> Any:
+    """匯出 wiki 頁面為 HTML 或 JSON bundle。"""
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+
+    all_pages = parser.get_pages()
+    if paths.strip():
+        want = {p.strip() for p in paths.split(",")}
+        selected = [p for p in all_pages if p["path"] in want]
+    else:
+        selected = all_pages
+
+    if not selected:
+        raise HTTPException(404, "No pages found.")
+
+    if fmt == "json":
+        return JSONResponse({"pages": selected, "count": len(selected)},
+                            headers={"Content-Disposition": "attachment; filename=wiki-export.json"})
+
+    # HTML: 單頁多文章
+    try:
+        import markdown as _md
+        def render_md(text: str) -> str:
+            return _md.markdown(text, extensions=["fenced_code", "tables"])
+    except ImportError:
+        import html as _html
+        def render_md(text: str) -> str:  # type: ignore[misc]
+            return "<pre>" + _html.escape(text) + "</pre>"
+
+    parts = []
+    toc = ['<div class="toc"><strong>目錄</strong>']
+    for p in selected:
+        pid = p["path"].replace("/", "-")
+        toc.append(f'<a href="#{pid}">{p.get("title", p["path"])}</a>')
+    toc.append("</div>")
+
+    for p in selected:
+        pid = p["path"].replace("/", "-")
+        tags_html = " ".join(f'<span class="tag">{t}</span>' for t in p.get("tags", []))
+        meta = f'<p class="meta">類型：{p.get("type","—")} · 標籤：{tags_html or "—"} · 信心度：{p.get("confidence","—")}</p>'
+        body_html = render_md(p.get("content", ""))
+        parts.append(f'<article id="{pid}"><h1>{p.get("title", p["path"])}</h1>{meta}{body_html}</article><hr>')
+
+    full_body = "\n".join(toc) + "\n" + "\n".join(parts)
+    title = f"Wiki Export ({len(selected)} pages)"
+    html = _HTML_EXPORT_TEMPLATE.format(
+        title=title, body=full_body,
+        date=datetime.now().strftime("%Y-%m-%d %H:%M")
+    )
+    return HTMLResponse(html, headers={"Content-Disposition": f'attachment; filename="wiki-export.html"'})
+
 # GitHub Sync endpoints
 # ══════════════════════════════════════════════════════════════════════
 

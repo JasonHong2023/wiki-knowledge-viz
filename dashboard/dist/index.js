@@ -407,6 +407,16 @@ var __sdk_jsx = {
 	* This source code is licensed under the ISC license.
 	* See the LICENSE file in the root directory of this source tree.
 	*/
+	var Flame = createLucideIcon("flame", [["path", {
+		d: "M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z",
+		key: "96xj49"
+	}]]);
+	/**
+	* @license lucide-react v0.507.0 - ISC
+	*
+	* This source code is licensed under the ISC license.
+	* See the LICENSE file in the root directory of this source tree.
+	*/
 	var GitCompare = createLucideIcon("git-compare", [
 		["circle", {
 			cx: "18",
@@ -870,7 +880,7 @@ var __sdk_jsx = {
 	}
 	//#endregion
 	//#region src/api.ts
-	var PLUGIN = "/api/plugins/llm-wiki";
+	var PLUGIN$2 = "/api/plugins/llm-wiki";
 	function getSDK() {
 		return window.__HERMES_PLUGIN_SDK__;
 	}
@@ -887,39 +897,39 @@ var __sdk_jsx = {
 		return res.json();
 	}
 	var wiki = {
-		stats: () => apiJSON(`${PLUGIN}/stats`),
-		pages: (params) => apiJSON(`${PLUGIN}/pages${params ? `?${params}` : ""}`),
-		page: (path) => apiJSON(`${PLUGIN}/pages/${path}`),
-		deletePage: (path) => apiFetch(`${PLUGIN}/pages/${encodeURIComponent(path)}`, { method: "DELETE" }),
-		graph: () => apiJSON(`${PLUGIN}/graph`),
-		timeline: (limit = 20) => apiJSON(`${PLUGIN}/timeline?limit=${limit}`),
-		allTags: () => apiJSON(`${PLUGIN}/all-tags`),
-		tags: () => apiJSON(`${PLUGIN}/tags`),
-		validateTags: (tags) => apiJSON(`${PLUGIN}/validate-tags?tags=${encodeURIComponent(tags)}`),
-		importUrl: (body) => apiFetch(`${PLUGIN}/import-url`, {
+		stats: () => apiJSON(`${PLUGIN$2}/stats`),
+		pages: (params) => apiJSON(`${PLUGIN$2}/pages${params ? `?${params}` : ""}`),
+		page: (path) => apiJSON(`${PLUGIN$2}/pages/${path}`),
+		deletePage: (path) => apiFetch(`${PLUGIN$2}/pages/${encodeURIComponent(path)}`, { method: "DELETE" }),
+		graph: () => apiJSON(`${PLUGIN$2}/graph`),
+		timeline: (limit = 20) => apiJSON(`${PLUGIN$2}/timeline?limit=${limit}`),
+		allTags: () => apiJSON(`${PLUGIN$2}/all-tags`),
+		tags: () => apiJSON(`${PLUGIN$2}/tags`),
+		validateTags: (tags) => apiJSON(`${PLUGIN$2}/validate-tags?tags=${encodeURIComponent(tags)}`),
+		importUrl: (body) => apiFetch(`${PLUGIN$2}/import-url`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body)
 		}),
-		uploadFile: (form, type = "auto", force = false) => apiFetch(`${PLUGIN}/upload?type=${encodeURIComponent(String(type))}&force=${force}`, {
+		uploadFile: (form, type = "auto", force = false) => apiFetch(`${PLUGIN$2}/upload?type=${encodeURIComponent(String(type))}&force=${force}`, {
 			method: "POST",
 			body: form
 		}),
-		analysisProgress: (taskId) => apiJSON(`${PLUGIN}/analysis-progress/${taskId}`)
+		analysisProgress: (taskId) => apiJSON(`${PLUGIN$2}/analysis-progress/${taskId}`)
 	};
 	var github = {
-		status: () => apiJSON(`${PLUGIN}/github/status`),
-		saveConfig: (body) => apiJSON(`${PLUGIN}/github/config`, {
+		status: () => apiJSON(`${PLUGIN$2}/github/status`),
+		saveConfig: (body) => apiJSON(`${PLUGIN$2}/github/config`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body)
 		}),
-		push: (body) => apiJSON(`${PLUGIN}/github/push`, {
+		push: (body) => apiJSON(`${PLUGIN$2}/github/push`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body)
 		}),
-		pull: () => apiJSON(`${PLUGIN}/github/pull`, {
+		pull: () => apiJSON(`${PLUGIN$2}/github/pull`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({})
@@ -2628,6 +2638,114 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		});
 	}
 	//#endregion
+	//#region src/components/WikiFirePanel.tsx
+	var PLUGIN$1 = "/api/plugins/llm-wiki";
+	var FIRE_COLS = [
+		{
+			key: "fact",
+			label: "F — Fact",
+			color: "text-blue-400",
+			desc: "客觀事實"
+		},
+		{
+			key: "index",
+			label: "I — Index",
+			color: "text-green-400",
+			desc: "索引關鍵字"
+		},
+		{
+			key: "relation",
+			label: "R — Relation",
+			color: "text-yellow-400",
+			desc: "相關概念"
+		},
+		{
+			key: "encyclopedia",
+			label: "E — Encyclopedia",
+			color: "text-purple-400",
+			desc: "百科摘要"
+		}
+	];
+	function WikiFirePanel({ pagePath }) {
+		const [result, setResult] = (0, react.useState)(null);
+		const [loading, setLoading] = (0, react.useState)(false);
+		const [error, setError] = (0, react.useState)(null);
+		async function generate() {
+			setLoading(true);
+			setError(null);
+			try {
+				const res = await apiFetch(`${PLUGIN$1}/pages/${encodeURIComponent(pagePath)}/fire`);
+				if (!res.ok) {
+					setError(`${res.status}: ${await res.text()}`);
+					return;
+				}
+				setResult(await res.json());
+			} catch (e) {
+				setError(e instanceof Error ? e.message : String(e));
+			} finally {
+				setLoading(false);
+			}
+		}
+		return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+			className: "mt-4 rounded-lg border border-current/10 p-3",
+			children: [
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					className: "mb-3 flex items-center justify-between",
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: "flex items-center gap-1.5 text-sm font-semibold",
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Flame, { className: "h-4 w-4 text-orange-400" }), "FIRE 四向分析"]
+					}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+						onClick: generate,
+						disabled: loading,
+						className: "flex items-center gap-1 rounded px-2.5 py-1 text-xs bg-current/10 hover:bg-current/20 transition-colors disabled:opacity-50",
+						children: [loading ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)(LoaderCircle, { className: "h-3.5 w-3.5 animate-spin" }) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(RefreshCw, { className: "h-3.5 w-3.5" }), result ? "重新生成" : "生成 FIRE 分析"]
+					})]
+				}),
+				error && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					className: "flex items-center gap-1.5 text-xs text-red-400 mb-2",
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(CircleAlert, { className: "h-3.5 w-3.5" }),
+						" ",
+						error
+					]
+				}),
+				result && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					className: "grid grid-cols-2 gap-2 md:grid-cols-4",
+					children: FIRE_COLS.map(({ key, label, color, desc }) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+						className: "rounded border border-current/10 p-2",
+						children: [
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: `text-xs font-semibold mb-1 ${color}`,
+								children: label
+							}),
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+								className: "text-xs text-text-tertiary mb-1.5",
+								children: desc
+							}),
+							key === "encyclopedia" ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+								className: "text-xs text-text-primary leading-relaxed",
+								children: result.fire.encyclopedia
+							}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("ul", {
+								className: "space-y-0.5",
+								children: result.fire[key].map((item, i) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("li", {
+									className: "text-xs text-text-primary flex gap-1",
+									children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+										className: `${color} opacity-60`,
+										children: "·"
+									}), item]
+								}, i))
+							})
+						]
+					}, key))
+				}),
+				!result && !loading && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+					className: "text-xs text-text-tertiary text-center py-3",
+					children: "點擊「生成 FIRE 分析」，用 LLM 分析此頁面的 Fact / Index / Relation / Encyclopedia"
+				})
+			]
+		});
+	}
+	//#endregion
 	//#region src/components/WikiPageDetail.tsx
 	function fmtDate$1(d) {
 		if (!d) return "—";
@@ -2756,7 +2874,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 								className: "italic text-text-tertiary",
 								children: "(empty)"
 							})
-						})] })
+						})] }),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(WikiFirePanel, { pagePath })
 					]
 				})
 			]
@@ -2764,6 +2883,11 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 	}
 	//#endregion
 	//#region src/pages/WikiPageList.tsx
+	var PLUGIN = "/api/plugins/llm-wiki";
+	function exportPages(paths, fmt) {
+		const query = paths.length ? `&paths=${encodeURIComponent(paths.join(","))}` : "";
+		window.open(`${PLUGIN}/export?fmt=${fmt}${query}`, "_blank");
+	}
 	function fmtDate(d) {
 		if (!d) return "—";
 		try {
@@ -2952,6 +3076,27 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 						pages.length,
 						" page",
 						pages.length !== 1 ? "s" : ""
+					]
+				}),
+				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					className: "ml-auto flex items-center gap-1",
+					children: [
+						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+							className: "text-xs text-text-tertiary mr-1",
+							children: "匯出全部："
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+							onClick: () => exportPages([], "html"),
+							className: "flex items-center gap-1 rounded px-2 py-1 text-xs bg-current/10 hover:bg-current/20 transition-colors",
+							title: "匯出為 HTML",
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Download, { className: "h-3.5 w-3.5" }), " HTML"]
+						}),
+						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+							onClick: () => exportPages([], "json"),
+							className: "flex items-center gap-1 rounded px-2 py-1 text-xs bg-current/10 hover:bg-current/20 transition-colors",
+							title: "匯出為 JSON",
+							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Download, { className: "h-3.5 w-3.5" }), " JSON"]
+						})
 					]
 				})
 			]
