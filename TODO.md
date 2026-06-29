@@ -2,7 +2,7 @@
 
 > 記錄時間：2026-06-29  
 > 最後更新：2026-06-29  
-> 狀態：P0~P2 技術債已清理，P3 觀察中，F1 新功能待開發
+> 狀態：P0~P2 技術債已清理，P3 觀察中，F1~F3 全部完成
 
 ---
 
@@ -140,6 +140,14 @@
 
 ## 🟣 F2 — 新功能：中價值（需要新 UI）
 
+- **F2 #12** Hypercard 卡片視圖（Cards tab，格狀卡片、搜尋、類型篩選、展開詳情）✅
+- **F2 #13** Luhmann 編號索引（Pages tab，可展開/收合分類樹，搜尋，Luhmann ID，合併舊 WikiPageList）✅
+- **F3 #14** iMandalart 九宮格（Mandalart tab，可建立多個看板、點格子編輯）✅
+- **F3 #15** Tars AI 對話助手（Tars tab，wiki RAG 關鍵字檢索、LLM 回答、來源頁面引用、語言選擇）✅
+- **UX** Upload tab / BatchImport 按鈕文字不可見問題（Tailwind 在 plugin bundle 無效）✅
+- **UX** Pages tab 側邊欄預設開啟最新頁面、點擊不再切換關閉 ✅
+- **UX** Pages tab 側邊欄溢出視窗右側 ✅
+
 ### 12. C — Hypercard 卡片視圖
 **來源：** Hermes.md 功能圖 — C. Hypercard  
 **目標：** 每篇文章自動轉成手機友善的單張永久卡片（約 300 字）
@@ -159,6 +167,9 @@
 ---
 
 ## ⬛ F3 — 新功能：低優先（架構差異大）
+
+- **F3 #14** iMandalart 九宮格（Mandalart tab，可建立多個看板、點格子編輯、支援 Todo 語法）✅
+- **F3 #15** Tars AI 對話助手（Tars tab，wiki RAG 關鍵字檢索、LLM 回答、來源頁面引用）✅
 
 ### 14. A — iMandalart 九宮格思維導圖
 **來源：** Hermes.md 功能圖 — A. iMandalart  

@@ -21,6 +21,23 @@ export async function apiJSON<T = unknown>(url: string, init?: RequestInit): Pro
 // Core wiki endpoints (served by plugin itself)
 export const wiki = {
   stats: () => apiJSON<any>(`${PLUGIN}/stats`),
+  index: () => apiJSON<any>(`${PLUGIN}/index`),
+  cards: (params?: string) => apiJSON<any>(`${PLUGIN}/cards${params ? `?${params}` : ""}`),
+  tars: {
+    chat: (message: string, history: {role: string; content: string}[], lang: string) =>
+      apiJSON<any>(`${PLUGIN}/tars/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, history, lang }),
+      }),
+  },
+  mandalart: {
+    list: () => apiJSON<any[]>(`${PLUGIN}/mandalart`),
+    get: (id: string) => apiJSON<any>(`${PLUGIN}/mandalart/${id}`),
+    create: (body: { title?: string; cells?: string[] }) => apiJSON<any>(`${PLUGIN}/mandalart`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+    update: (id: string, body: { title?: string; cells?: string[] }) => apiJSON<any>(`${PLUGIN}/mandalart/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+    delete: (id: string) => apiFetch(`${PLUGIN}/mandalart/${id}`, { method: "DELETE" }),
+  },
   pages: (params?: string) => apiJSON<any>(`${PLUGIN}/pages${params ? `?${params}` : ""}`),
   page: (path: string) => apiJSON<any>(`${PLUGIN}/pages/${path}`),
   deletePage: (path: string) => apiFetch(`${PLUGIN}/pages/${encodeURIComponent(path)}`, { method: "DELETE" }),

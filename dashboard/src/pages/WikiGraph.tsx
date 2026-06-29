@@ -9,8 +9,8 @@ interface GraphEdge { source: string; target: string; type: string; shared_tags:
 interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; }
 interface LayoutNode extends GraphNode { x: number; y: number; z: number; vx: number; vy: number; vz: number; pinned: boolean; }
 
-const NODE_RADIUS = 8, REPULSION = 3000, ATTRACTION = 0.004, DAMPING = 0.85, CENTER_GRAV = 0.004, IDEAL_DIST = 160;
-const REPULSION_3D = 4000, ATTRACTION_3D = 0.004, IDEAL_DIST_3D = 180, FOV_3D = 600, DEPTH_3D = 400;
+const NODE_RADIUS = 8, REPULSION = 12000, ATTRACTION = 0.002, DAMPING = 0.82, CENTER_GRAV = 0.002, IDEAL_DIST = 280;
+const REPULSION_3D = 18000, ATTRACTION_3D = 0.002, IDEAL_DIST_3D = 320, FOV_3D = 600, DEPTH_3D = 400;
 
 function nodeRadius(n: GraphNode | LayoutNode): number {
   return NODE_RADIUS + Math.min((n.inbound_count ?? 0) * 2, 14);
@@ -102,8 +102,8 @@ export default function WikiGraph() {
   const containerRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<LayoutNode[]>([]);
   const animRef = useRef<number>(0);
-  const [dim, setDim] = useState({ w: 800, h: 600 });
-  const dimRef = useRef({ w: 800, h: 600 });
+  const [dim, setDim] = useState({ w: 800, h: 520 });
+  const dimRef = useRef({ w: 800, h: 520 });
   const [scale2D, setScale2D] = useState(1);
   const [offset2D, setOffset2D] = useState({ x: 0, y: 0 });
   const scale2DRef = useRef(1), offset2DRef = useRef({ x: 0, y: 0 });
@@ -134,7 +134,7 @@ export default function WikiGraph() {
 
   useEffect(() => {
     if (!data) return;
-    const w = containerRef.current?.clientWidth ?? 800, h = containerRef.current?.clientHeight ?? 600;
+    const w = containerRef.current?.clientWidth ?? 800, h = containerRef.current?.clientHeight ?? 520;
     setDim({ w, h }); dimRef.current = { w, h };
     const spread = Math.min(w, h) * 0.38;
     layoutRef.current = data.nodes.map(node => ({
@@ -349,50 +349,50 @@ export default function WikiGraph() {
     scale2DRef.current=newScale; offset2DRef.current=newOffset; setScale2D(newScale); setOffset2D(newOffset);
   }, []);
 
+  const btnStyle: React.CSSProperties = { borderRadius: 6, padding: "4px 6px", background: "rgba(128,128,128,0.1)", border: "none", cursor: "pointer", color: "inherit", display: "flex", alignItems: "center" };
   const headerBar = (
-    <div className="mb-4 flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <Share2 className="h-5 w-5 text-text-secondary" />
-        <h1 className="text-lg font-semibold">Wiki Graph</h1>
-        {data && <span className="text-xs text-text-tertiary">{data.nodes.length} nodes · {data.edges.length} edges</span>}
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Share2 style={{ width: 18, height: 18 }} />
+        <h1 className="wiki-heading" style={{ margin: 0 }}>Wiki Graph</h1>
+        {data && <span className="wiki-muted">{data.nodes.length} nodes · {data.edges.length} edges</span>}
       </div>
-      <div className="flex items-center gap-1">
-        <button onClick={() => void load()} className="rounded p-1.5 text-text-tertiary hover:text-text-secondary transition-colors mr-1"><RefreshCw className="h-4 w-4" /></button>
-        <div className="flex rounded border border-current/20 overflow-hidden mr-2">
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <button style={btnStyle} onClick={() => void load()} title="Refresh"><RefreshCw style={{ width: 14, height: 14 }} /></button>
+        <div style={{ display: "flex", borderRadius: 6, border: "1px solid rgba(128,128,128,0.2)", overflow: "hidden", marginRight: 8 }}>
           {(["2d","3d"] as const).map(m => (
-            <button key={m} onClick={() => setMode(m)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${mode===m?"bg-midground/30 text-text-primary":"text-text-tertiary hover:text-text-secondary"}`}>
-              {m === "2d" ? <Square className="h-3.5 w-3.5" /> : <Box className="h-3.5 w-3.5" />} {m.toUpperCase()}
+            <button key={m} onClick={() => setMode(m)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 12px", fontSize: 12, fontWeight: 500, cursor: "pointer", border: "none", background: mode===m ? "rgba(128,128,128,0.25)" : "transparent", color: "inherit" }}>
+              {m === "2d" ? <Square style={{ width: 12, height: 12 }} /> : <Box style={{ width: 12, height: 12 }} />} {m.toUpperCase()}
             </button>
           ))}
         </div>
-        <button title="Zoom in" className="rounded bg-current/10 p-1.5 hover:bg-current/20" onClick={() => { if (mode==="2d"){const{w,h}=dimRef.current;applyZoom2D(w/2,h/2,.2);}else scale3DRef.current=Math.min(scale3DRef.current+.2,3); }}><ZoomIn className="h-4 w-4" /></button>
-        <button title="Zoom out" className="rounded bg-current/10 p-1.5 hover:bg-current/20" onClick={() => { if (mode==="2d"){const{w,h}=dimRef.current;applyZoom2D(w/2,h/2,-.2);}else scale3DRef.current=Math.max(scale3DRef.current-.2,.3); }}><ZoomOut className="h-4 w-4" /></button>
-        <button title="Reset" className="rounded bg-current/10 p-1.5 hover:bg-current/20" onClick={() => { if (mode==="2d"){const z={x:0,y:0};setOffset2D(z);offset2DRef.current=z;setScale2D(1);scale2DRef.current=1;}else{rotRef.current={x:.3,y:0};scale3DRef.current=1;} }}><RotateCw className="h-4 w-4" /></button>
+        <button style={btnStyle} title="Zoom in" onClick={() => { if (mode==="2d"){const{w,h}=dimRef.current;applyZoom2D(w/2,h/2,.2);}else scale3DRef.current=Math.min(scale3DRef.current+.2,3); }}><ZoomIn style={{ width: 14, height: 14 }} /></button>
+        <button style={btnStyle} title="Zoom out" onClick={() => { if (mode==="2d"){const{w,h}=dimRef.current;applyZoom2D(w/2,h/2,-.2);}else scale3DRef.current=Math.max(scale3DRef.current-.2,.3); }}><ZoomOut style={{ width: 14, height: 14 }} /></button>
+        <button style={btnStyle} title="Reset" onClick={() => { if (mode==="2d"){const z={x:0,y:0};setOffset2D(z);offset2DRef.current=z;setScale2D(1);scale2DRef.current=1;}else{rotRef.current={x:.3,y:0};scale3DRef.current=1;} }}><RotateCw style={{ width: 14, height: 14 }} /></button>
       </div>
     </div>
   );
 
-  if (loading) return <div>{headerBar}<div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-text-tertiary" /></div></div>;
-  if (error) return <div>{headerBar}<div className="rounded-lg border border-red-400/20 bg-red-400/5 p-4 text-sm text-red-400">{error}</div></div>;
+  if (loading) return <div>{headerBar}<div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:"4rem 0" }}><Loader2 style={{ width:24, height:24 }} /></div></div>;
+  if (error) return <div>{headerBar}<div className="wiki-error">{error}</div></div>;
 
   const graphNodes = layoutRef.current;
 
   return (
-    <div className="flex flex-col" style={{ minHeight: 500 }}>
+    <div style={{ display: "flex", flexDirection: "column" }}>
       {headerBar}
-      <div className="mb-3 flex flex-wrap gap-4 text-xs text-text-secondary">
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, marginBottom: 10, alignItems: "center" }}>
         {Object.entries(TYPE_COLORS).map(([type, color]) => (
-          <span key={type} className="flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+          <span key={type} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", backgroundColor: color }} />
             {type.charAt(0).toUpperCase()+type.slice(1)}
           </span>
         ))}
-        <span className="ml-2 border-l border-current/20 pl-4 flex items-center gap-1.5 text-text-tertiary">
+        <span style={{ marginLeft: 8, paddingLeft: 12, borderLeft: "1px solid rgba(128,128,128,0.2)", color: "var(--color-text-tertiary,#888)" }}>
           節點大小 = 被引用次數 · 連線粗細 = 共享標籤數
         </span>
       </div>
-      <div ref={containerRef} className={`relative flex-1 overflow-hidden rounded-lg border ${mode==="3d"?"border-white/5 bg-[#05050e]":"border-current/10 bg-current/[0.02]"}`} style={{ height: 480 }}>
+      <div ref={containerRef} style={{ position: "relative", overflow: "hidden", borderRadius: 8, border: `1px solid ${mode==="3d"?"rgba(255,255,255,0.06)":"rgba(128,128,128,0.15)"}`, background: mode==="3d"?"#05050e":"rgba(128,128,128,0.02)", height: 520 }}>
         <svg ref={svgRef} width="100%" height="100%" className="select-none" style={{ display: mode==="2d"?"block":"none" }}
           onMouseDown={handleSVGMouseDown} onMouseMove={handleSVGMouseMove} onMouseUp={handleSVGMouseUp} onMouseLeave={handleSVGMouseUp}
           onWheel={e => { e.preventDefault(); const rect=svgRef.current!.getBoundingClientRect(); applyZoom2D(e.clientX-rect.left,e.clientY-rect.top,-e.deltaY*.001); }}>
@@ -423,7 +423,7 @@ export default function WikiGraph() {
         </svg>
         <canvas ref={canvasRef} className="select-none" style={{ display: mode==="3d"?"block":"none", width:"100%", height:"100%" }}
           onMouseDown={handle3DMouseDown} onMouseMove={handle3DMouseMove} onMouseUp={handle3DMouseUp} onMouseLeave={handle3DMouseUp} onWheel={handle3DWheel} />
-        {!graphNodes.length && <div className="absolute inset-0 flex items-center justify-center"><p className="text-sm text-text-tertiary">No graph data available.</p></div>}
+        {!graphNodes.length && <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}><p className="wiki-muted">No graph data available.</p></div>}
       </div>
     </div>
   );

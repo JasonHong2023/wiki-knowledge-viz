@@ -439,6 +439,106 @@ async def get_stats() -> dict[str, Any]:
         raise HTTPException(503, "Wiki is not configured. Set the WIKI_PATH environment variable.")
     return parser.get_stats()
 
+def _make_excerpt(content: str, max_len: int = 240) -> str:
+    """Strip markdown syntax and return a short excerpt."""
+    import re as _re
+    text = _re.sub(r'\[\[([^\]|]+)(?:\|[^\]]+)?\]\]', r'\1', content)
+    text = _re.sub(r'!\[.*?\]\(.*?\)', '', text)
+    text = _re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    text = _re.sub(r'^#{1,6}\s+', '', text, flags=_re.MULTILINE)
+    text = _re.sub(r'[*_`~]{1,3}', '', text)
+    text = _re.sub(r'^\s*[-*+>|]\s*', '', text, flags=_re.MULTILINE)
+    text = _re.sub(r'\s+', ' ', text).strip()
+    if len(text) > max_len:
+        return text[:max_len].rsplit(' ', 1)[0] + '…'
+    return text
+
+@router.get("/index")
+async def get_luhmann_index() -> dict[str, Any]:
+    """Luhmann 編號索引：按標籤分類自動生成樹狀階層編號。"""
+    from hermes_cli.tag_registry_updater import classify_tag
+
+    CATEGORY_ORDER = ["AI", "技術", "程式語言", "API", "概念", "來源", "語言", "格式", "主題"]
+
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    pages = parser.get_pages(sort="title", order="asc")
+
+    # 每頁取最高優先分類
+    def primary_category(page: dict) -> str:
+        tags = page.get("tags", [])
+        for cat in CATEGORY_ORDER:
+            for t in tags:
+                if classify_tag(t) == cat:
+                    return cat
+        return "主題"
+
+    # 按分類分組
+    buckets: dict[str, list[dict]] = {c: [] for c in CATEGORY_ORDER}
+    for p in pages:
+        cat = primary_category(p)
+        buckets[cat].append(p)
+
+    # 建立 Luhmann 編號樹
+    tree = []
+    cat_num = 0
+    for cat in CATEGORY_ORDER:
+        items = buckets[cat]
+        if not items:
+            continue
+        cat_num += 1
+        children = []
+        for i, p in enumerate(items, 1):
+            children.append({
+                "id": f"{cat_num}.{i}",
+                "path": p["path"],
+                "title": p.get("title", p["path"]),
+                "type": p.get("type", ""),
+                "tags": p.get("tags", [])[:4],
+                "confidence": p.get("confidence", ""),
+                "updated": p.get("updated", ""),
+            })
+        tree.append({
+            "id": str(cat_num),
+            "label": cat,
+            "count": len(items),
+            "children": children,
+        })
+
+    return {"tree": tree, "total": len(pages)}
+
+@router.get("/cards")
+async def get_cards(
+    type: str | None = Query(None, alias="type"),
+    tag: list[str] | None = Query(None, alias="tag"),
+    q: str | None = Query(None),
+    sort: str = Query("updated", alias="sort"),
+    order: str = Query("desc", alias="order"),
+) -> list[dict[str, Any]]:
+    """Hypercard 摘要：每頁 title + excerpt + tags，適合卡片格瀏覽。"""
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    pages = parser.get_pages(page_type=type, tag=tag, sort=sort, order=order)
+    if q:
+        ql = q.lower()
+        pages = [p for p in pages if ql in p.get("title", "").lower() or any(ql in t.lower() for t in p.get("tags", []))]
+    return [
+        {
+            "path": p["path"],
+            "title": p.get("title", p["path"]),
+            "type": p.get("type", ""),
+            "tags": p.get("tags", [])[:6],
+            "confidence": p.get("confidence", ""),
+            "updated": p.get("updated", ""),
+            "excerpt": _make_excerpt(p.get("content", "")),
+            "inbound_count": p.get("inbound_link_count", 0),
+            "outbound_count": len(p.get("outboundLinks", [])),
+        }
+        for p in pages
+    ]
+
 @router.get("/pages")
 async def get_pages(
     type: str | None = Query(None, alias="type"),
@@ -962,6 +1062,187 @@ def _do_auto_sync() -> None:
 
 class GitHubConfigRequest(BaseModel):
     repo_url: str; pat: str; branch: str = "main"; auto_sync: str = "off"
+
+# ── Mandalart ──────────────────────────────────────────────────────────────
+
+import uuid as _uuid
+
+def _mandalart_path() -> Path:
+    parser = _get_parser()
+    if parser and parser.is_available():
+        base = parser.wiki_path / ".mandalart"
+    else:
+        base = Path.home() / ".hermes" / "llm-wiki-mandalart"
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "boards.json"
+
+def _load_boards() -> list[dict]:
+    p = _mandalart_path()
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def _save_boards(boards: list[dict]) -> None:
+    p = _mandalart_path()
+    p.write_text(json.dumps(boards, ensure_ascii=False, indent=2), encoding="utf-8")
+
+class MandalartCreateRequest(BaseModel):
+    title: str = "新曼陀羅"
+    cells: list[str] = [""] * 9
+
+class MandalartUpdateRequest(BaseModel):
+    title: str | None = None
+    cells: list[str] | None = None
+
+@router.get("/mandalart")
+async def list_mandalart() -> list[dict]:
+    boards = _load_boards()
+    return [{"id": b["id"], "title": b["title"], "created": b["created"], "updated": b["updated"]} for b in boards]
+
+@router.post("/mandalart")
+async def create_mandalart(req: MandalartCreateRequest) -> dict:
+    boards = _load_boards()
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    board = {
+        "id": str(_uuid.uuid4())[:8],
+        "title": req.title,
+        "cells": (req.cells + [""] * 9)[:9],
+        "created": now,
+        "updated": now,
+    }
+    boards.append(board)
+    _save_boards(boards)
+    return board
+
+@router.get("/mandalart/{board_id}")
+async def get_mandalart(board_id: str) -> dict:
+    for b in _load_boards():
+        if b["id"] == board_id:
+            return b
+    raise HTTPException(404, "找不到該曼陀羅")
+
+@router.put("/mandalart/{board_id}")
+async def update_mandalart(board_id: str, req: MandalartUpdateRequest) -> dict:
+    boards = _load_boards()
+    for b in boards:
+        if b["id"] == board_id:
+            if req.title is not None:
+                b["title"] = req.title
+            if req.cells is not None:
+                b["cells"] = (req.cells + [""] * 9)[:9]
+            b["updated"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+            _save_boards(boards)
+            return b
+    raise HTTPException(404, "找不到該曼陀羅")
+
+@router.delete("/mandalart/{board_id}")
+async def delete_mandalart(board_id: str) -> dict:
+    boards = _load_boards()
+    new_boards = [b for b in boards if b["id"] != board_id]
+    if len(new_boards) == len(boards):
+        raise HTTPException(404, "找不到該曼陀羅")
+    _save_boards(new_boards)
+    return {"ok": True}
+
+# ── Tars AI 對話 ────────────────────────────────────────────────────────────
+
+_LANG_INSTRUCTIONS: dict[str, str] = {
+    "zh-TW": "使用繁體中文回答。",
+    "zh-CN": "使用简体中文回答。",
+    "en":    "Reply in English.",
+    "ja":    "日本語で回答してください。",
+}
+
+class TarsChatRequest(BaseModel):
+    message: str
+    history: list[dict] = []
+    lang: str = "auto"  # "auto" | "zh-TW" | "zh-CN" | "en" | "ja"
+
+def _retrieve_wiki_context(question: str, max_pages: int = 4) -> list[dict]:
+    """Keyword-based wiki retrieval for RAG context."""
+    parser = _get_parser()
+    if not parser or not parser.is_available():
+        return []
+    words = set(re.sub(r'[^\w\s]', ' ', question.lower()).split())
+    words = {w for w in words if len(w) > 1}
+    pages = parser.get_pages()
+    scored = []
+    for p in pages:
+        title = p.get("title", "").lower()
+        content = p.get("content", "")[:800].lower()
+        tags = " ".join(p.get("tags", [])).lower()
+        score = sum(1 for w in words if w in title) * 3 \
+              + sum(1 for w in words if w in content) \
+              + sum(1 for w in words if w in tags) * 2
+        if score > 0:
+            scored.append((score, p))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [p for _, p in scored[:max_pages]]
+
+@router.post("/tars/chat")
+async def tars_chat(req: TarsChatRequest) -> dict:
+    if not req.message.strip():
+        raise HTTPException(400, "訊息不能為空")
+
+    sources = _retrieve_wiki_context(req.message)
+    context_text = ""
+    if sources:
+        parts = []
+        for p in sources:
+            content = p.get("content", "")[:600]
+            parts.append(f"## {p.get('title', p['path'])}\n{content}")
+        context_text = "\n\n---\n\n".join(parts)
+
+    lang = req.lang if req.lang in _LANG_INSTRUCTIONS else "auto"
+    if lang == "auto":
+        lang_instruction = "Detect the language of the user's question and reply in the same language."
+    else:
+        lang_instruction = _LANG_INSTRUCTIONS[lang]
+
+    system_prompt = f"""You are Tars, an AI assistant who knows this personal wiki well.
+When answering:
+1. Prioritize the wiki content provided as context
+2. If the wiki has no relevant content, say so and supplement with your general knowledge
+3. Be concise and focused
+4. If citing sources, list them at the end as [Source: page name]
+5. {lang_instruction}"""
+
+    user_content = req.message
+    if context_text:
+        user_content = f"【相關知識庫內容】\n{context_text}\n\n【問題】{req.message}"
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for h in req.history[-6:]:
+        if h.get("role") in ("user", "assistant") and h.get("content"):
+            messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": user_content})
+
+    try:
+        from agent.auxiliary_client import get_async_text_auxiliary_client
+        client, model = get_async_text_auxiliary_client("wiki_tars")
+        if not client:
+            raise RuntimeError("No LLM configured")
+        resp = await client.chat.completions.create(
+            model=model or "claude-haiku-4-5-20251001",
+            messages=messages,
+            max_tokens=800,
+        )
+        answer = resp.choices[0].message.content or ""
+    except Exception as e:
+        answer = f"（LLM 不可用：{e}）\n\n根據知識庫內容，找到以下相關頁面：\n" + \
+                 "\n".join(f"- {p.get('title', p['path'])}" for p in sources) if sources else \
+                 f"（LLM 不可用：{e}）"
+
+    return {
+        "answer": answer,
+        "sources": [{"path": p["path"], "title": p.get("title", p["path"])} for p in sources],
+    }
+
+# ── GitHub ─────────────────────────────────────────────────────────────────
 
 class GitHubPushRequest(BaseModel):
     message: str = ""

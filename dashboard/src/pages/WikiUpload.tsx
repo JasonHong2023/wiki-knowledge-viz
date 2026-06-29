@@ -233,7 +233,7 @@ function BatchImport({ docType, onRefresh }: { docType: string; onRefresh: () =>
             type="button"
             disabled={parseUrls().length === 0}
             onClick={() => void handleStart()}
-            className="rounded-md bg-midground px-4 py-2 text-sm font-medium text-black hover:opacity-90 disabled:opacity-50"
+            style={{ padding: "8px 18px", borderRadius: 6, fontSize: 13, fontWeight: 500, border: "none", cursor: parseUrls().length === 0 ? "not-allowed" : "pointer", background: "rgba(99,102,241,0.8)", color: "#fff", opacity: parseUrls().length === 0 ? 0.4 : 1 }}
           >
             開始批量匯入
           </button>
@@ -316,14 +316,14 @@ function BatchImport({ docType, onRefresh }: { docType: string; onRefresh: () =>
                         <button
                           type="button"
                           onClick={() => void handleOverwrite(row.id, row.url)}
-                          className="rounded bg-yellow-400 px-2 py-0.5 text-[11px] font-medium text-black hover:opacity-90"
+                          style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 500, border: "none", cursor: "pointer", background: "rgba(251,191,36,0.8)", color: "#1a1a1a" }}
                         >
                           覆蓋
                         </button>
                         <button
                           type="button"
                           onClick={() => handleSkip(row.id)}
-                          className="rounded border border-border px-2 py-0.5 text-[11px] text-text-secondary hover:text-text-primary"
+                          style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, border: "1px solid rgba(128,128,128,0.3)", background: "transparent", cursor: "pointer", color: "var(--color-text-secondary,#aaa)" }}
                         >
                           跳過
                         </button>
@@ -460,10 +460,14 @@ export default function WikiUpload({ onRefresh }: { onRefresh: () => void }) {
 
   const resetTab = () => { setError(null); setResult(null); setConflict(null); setTaskId(null); setProgress(null); clearPoll(); };
 
-  const tabClass = (tab: TabId) =>
-    `flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-      activeTab === tab ? "bg-midground text-black" : "text-text-secondary hover:text-text-primary"
-    }`;
+  const tabStyle = (tab: TabId): React.CSSProperties => ({
+    display: "inline-flex", alignItems: "center", gap: 6, borderRadius: 8, padding: "6px 14px",
+    fontSize: 13, fontWeight: 500, cursor: "pointer", border: "1px solid",
+    background: activeTab === tab ? "rgba(99,102,241,0.15)" : "transparent",
+    color: activeTab === tab ? "#a5b4fc" : "var(--color-text-tertiary,#888)",
+    borderColor: activeTab === tab ? "rgba(99,102,241,0.35)" : "rgba(128,128,128,0.2)",
+    transition: "background 0.15s, color 0.15s",
+  });
 
   const activeStep = progress?.steps
     ? Object.entries(progress.steps).find(([, v]) => v.status === "in_progress")
@@ -479,17 +483,17 @@ export default function WikiUpload({ onRefresh }: { onRefresh: () => void }) {
         <h1 className="text-xl font-bold text-text-primary">Wiki Upload</h1>
       </div>
 
-      <div className="mb-6 flex gap-2">
-        <button type="button" className={tabClass("import-url")} onClick={() => { setActiveTab("import-url"); resetTab(); }}>
-          <Globe className="h-4 w-4" />
+      <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+        <button type="button" style={tabStyle("import-url")} onClick={() => { setActiveTab("import-url"); resetTab(); }}>
+          <Globe style={{ width: 14, height: 14 }} />
           Import URL
         </button>
-        <button type="button" className={tabClass("upload-file")} onClick={() => { setActiveTab("upload-file"); resetTab(); }}>
-          <FileText className="h-4 w-4" />
+        <button type="button" style={tabStyle("upload-file")} onClick={() => { setActiveTab("upload-file"); resetTab(); }}>
+          <FileText style={{ width: 14, height: 14 }} />
           Upload File
         </button>
-        <button type="button" className={tabClass("batch-import")} onClick={() => { setActiveTab("batch-import"); resetTab(); }}>
-          <List className="h-4 w-4" />
+        <button type="button" style={tabStyle("batch-import")} onClick={() => { setActiveTab("batch-import"); resetTab(); }}>
+          <List style={{ width: 14, height: 14 }} />
           批量匯入
         </button>
       </div>
@@ -525,7 +529,8 @@ export default function WikiUpload({ onRefresh }: { onRefresh: () => void }) {
                 type="file"
                 accept=".md,.markdown,.pdf,.pptx,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                className="w-full text-sm text-text-primary file:mr-3 file:rounded-md file:border-0 file:bg-midground file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-black hover:file:opacity-90"
+                className="w-full text-sm"
+                style={{ fontSize: 13 }}
               />
             </div>
           )}
@@ -547,7 +552,7 @@ export default function WikiUpload({ onRefresh }: { onRefresh: () => void }) {
             type="button"
             disabled={loading || (activeTab === "import-url" ? !url : !file)}
             onClick={handleSubmit}
-            className="rounded-md bg-midground px-4 py-2 text-sm font-medium text-black hover:opacity-90 disabled:opacity-50"
+            style={{ padding: "8px 18px", borderRadius: 6, fontSize: 13, fontWeight: 500, border: "none", cursor: "pointer", background: "rgba(99,102,241,0.8)", color: "#fff", opacity: (loading || (activeTab === "import-url" ? !url : !file)) ? 0.4 : 1 }}
           >
             {loading ? (
               <span className="flex items-center gap-2">
@@ -611,10 +616,10 @@ export default function WikiUpload({ onRefresh }: { onRefresh: () => void }) {
             現有檔案：<code className="text-text-primary">{conflict.existing_path}</code>
           </p>
           <div className="flex gap-2">
-            <button type="button" onClick={handleForceOverwrite} className="rounded-md bg-yellow-400 px-3 py-1.5 text-xs font-medium text-black hover:opacity-90">
+            <button type="button" onClick={handleForceOverwrite} style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500, border: "none", cursor: "pointer", background: "rgba(251,191,36,0.8)", color: "#1a1a1a" }}>
               覆蓋並重新匯入
             </button>
-            <button type="button" onClick={() => setConflict(null)} className="rounded-md border border-border px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary">
+            <button type="button" onClick={() => setConflict(null)} style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, border: "1px solid rgba(128,128,128,0.3)", background: "transparent", cursor: "pointer", color: "var(--color-text-secondary,#aaa)" }}>
               取消
             </button>
           </div>

@@ -11,33 +11,33 @@ interface AllTagInfo {
 // Category display order and labels
 const CATEGORY_ORDER = ["來源", "語言", "AI", "程式語言", "API", "技術", "格式", "概念", "主題"];
 
-const CATEGORY_COLORS: Record<string, string> = {
-  "來源":    "bg-blue-400/15 text-blue-300 border-blue-400/20",
-  "語言":    "bg-purple-400/15 text-purple-300 border-purple-400/20",
-  "AI":      "bg-pink-400/15 text-pink-300 border-pink-400/20",
-  "程式語言": "bg-cyan-400/15 text-cyan-300 border-cyan-400/20",
-  "API":     "bg-orange-400/15 text-orange-300 border-orange-400/20",
-  "技術":    "bg-green-400/15 text-green-300 border-green-400/20",
-  "格式":    "bg-yellow-400/15 text-yellow-300 border-yellow-400/20",
-  "概念":    "bg-indigo-400/15 text-indigo-300 border-indigo-400/20",
-  "主題":    "bg-current/10 text-text-secondary border-current/10",
+type TagColorStyle = { background: string; color: string; borderColor: string };
+const CATEGORY_COLORS: Record<string, TagColorStyle> = {
+  "來源":    { background: "rgba(96,165,250,0.15)",  color: "#93c5fd", borderColor: "rgba(96,165,250,0.25)" },
+  "語言":    { background: "rgba(192,132,252,0.15)", color: "#d8b4fe", borderColor: "rgba(192,132,252,0.25)" },
+  "AI":      { background: "rgba(244,114,182,0.15)", color: "#f9a8d4", borderColor: "rgba(244,114,182,0.25)" },
+  "程式語言": { background: "rgba(34,211,238,0.15)",  color: "#67e8f9", borderColor: "rgba(34,211,238,0.25)" },
+  "API":     { background: "rgba(251,146,60,0.15)",  color: "#fdba74", borderColor: "rgba(251,146,60,0.25)" },
+  "技術":    { background: "rgba(74,222,128,0.15)",  color: "#86efac", borderColor: "rgba(74,222,128,0.25)" },
+  "格式":    { background: "rgba(250,204,21,0.15)",  color: "#fde047", borderColor: "rgba(250,204,21,0.25)" },
+  "概念":    { background: "rgba(129,140,248,0.15)", color: "#a5b4fc", borderColor: "rgba(129,140,248,0.25)" },
+  "主題":    { background: "rgba(148,163,184,0.12)", color: "#94a3b8", borderColor: "rgba(148,163,184,0.2)" },
 };
+const DEFAULT_COLOR: TagColorStyle = CATEGORY_COLORS["主題"];
 
-function tagColor(category: string): string {
-  return CATEGORY_COLORS[category] ?? CATEGORY_COLORS["主題"];
+function tagColorStyle(category: string): TagColorStyle {
+  return CATEGORY_COLORS[category] ?? DEFAULT_COLOR;
 }
 
 // ── Tag pill ────────────────────────────────────────────────────────────
 function TagPill({ tag, category }: { tag: AllTagInfo; category: string }) {
   const maxCount = 20;
   const scale = Math.max(0.75, Math.min(1.25, 0.75 + (tag.count / maxCount) * 0.5));
+  const cs = tagColorStyle(category);
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-opacity hover:opacity-90 ${tagColor(category)}`}
-      style={{ fontSize: `${Math.round(scale * 12)}px` }}
-    >
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, borderRadius: 9999, border: `1px solid ${cs.borderColor}`, padding: "2px 10px", fontSize: Math.round(scale * 12), fontWeight: 500, background: cs.background, color: cs.color }}>
       {tag.name}
-      <span className="opacity-60 text-[10px]">{tag.count}</span>
+      <span style={{ opacity: 0.6, fontSize: 10 }}>{tag.count}</span>
     </span>
   );
 }
@@ -214,7 +214,7 @@ export default function WikiTags() {
               {grouped.map(({ name }) => (
                 <span
                   key={name}
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${tagColor(name)}`}
+                  style={{ borderRadius: 9999, border: `1px solid ${tagColorStyle(name).borderColor}`, padding: "2px 10px", fontSize: 11, fontWeight: 500, background: tagColorStyle(name).background, color: tagColorStyle(name).color }}
                 >
                   {name}
                 </span>

@@ -1,13 +1,13 @@
 import { marked } from "marked";
 import { useMemo } from "react";
 
-marked.setOptions({ breaks: true });
+marked.use({ breaks: true });
 
 export default function Markdown({ content }: { content: string }) {
   const html = useMemo(() => marked.parse(content) as string, [content]);
   return (
     <div
-      className="prose prose-sm max-w-none"
+      className="wiki-prose"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
