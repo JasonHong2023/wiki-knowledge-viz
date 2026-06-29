@@ -1,7 +1,19 @@
 # LLM-Wiki Plugin — 待處理事項
 
 > 記錄時間：2026-06-29  
-> 狀態：已完成外掛化重構，以下為後續待處理問題
+> 最後更新：2026-06-29  
+> 狀態：P0~P2 技術債已清理，P3 觀察中，F1 新功能待開發
+
+---
+
+## ✅ 已完成
+
+- **P0 #1** 刪除死碼（wiki_router.py + 8 個 web/src wiki 檔案）
+- **P1 #2** plugin_api.py 頂部加入 hermes_cli 相依模組清單
+- **P1 #3** npm run watch 已可用（package.json 已有 watch script）
+- **P2 #4** vite build --watch 開發流程確認可用
+- **P2 #5** 新增 WikiRefreshContext（plugin 內建 context，取代 prop drilling）
+- **P2 #6** 新增 Markdown 元件（marked），WikiPageDetail 改用 Markdown 渲染
 
 ---
 
