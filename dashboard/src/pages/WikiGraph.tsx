@@ -4,8 +4,8 @@ import { wiki } from "../api";
 
 type GraphMode = "2d" | "3d";
 
-interface GraphNode { id: string; type: string; title: string; tags: string[]; confidence: string; inbound_count: number; }
-interface GraphEdge { source: string; target: string; type: string; shared_tags: number; }
+interface GraphNode { id: string; type: string; title: string; tags: string[]; confidence: string; inbound_count: number; mastery?: number; }
+interface GraphEdge { source: string; target: string; type: string; shared_tags: number; rel_type?: string; }
 interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; }
 interface LayoutNode extends GraphNode { x: number; y: number; z: number; vx: number; vy: number; vz: number; pinned: boolean; }
 
@@ -16,11 +16,26 @@ function nodeRadius(n: GraphNode | LayoutNode): number {
   return NODE_RADIUS + Math.min((n.inbound_count ?? 0) * 2, 14);
 }
 function edgeWidth(e: GraphEdge): number {
-  return 1 + Math.min((e.shared_tags ?? 0), 5);
+  return 0.5 + Math.min((e.shared_tags ?? 0) * 0.4, 2);
 }
 
 const TYPE_COLORS: Record<string, string> = { entity: "#60a5fa", concept: "#34d399", comparison: "#fbbf24" };
 const TYPE_COLORS_3D: Record<string, string> = { entity: "#7dd3fc", concept: "#6ee7b7", comparison: "#fde68a" };
+
+const EDGE_TYPE_COLORS: Record<string, string> = {
+  prerequisite: "#f97316",
+  contains: "#60a5fa",
+  applies_to: "#34d399",
+};
+const EDGE_TYPE_COLORS_HL: Record<string, string> = {
+  prerequisite: "#fdba74",
+  contains: "#93c5fd",
+  applies_to: "#6ee7b7",
+};
+const DIRECTED_TYPES = new Set(["prerequisite", "contains", "applies_to"]);
+const EDGE_LABELS: Record<string, string> = { prerequisite: "前置", contains: "包含", related: "關聯", applies_to: "應用" };
+
+const MASTERY_GLOW = ["rgba(0,0,0,0)","rgba(148,163,184,0.25)","rgba(96,165,250,0.3)","rgba(52,211,153,0.35)","rgba(251,191,36,0.4)","rgba(192,132,252,0.45)"];
 
 function forceLayout2D(nodes: LayoutNode[], edges: GraphEdge[], w: number, h: number): void {
   const cx = w / 2, cy = h / 2;
@@ -97,6 +112,17 @@ export default function WikiGraph() {
   const [error, setError] = useState<string|null>(null);
   const [hoveredNode, setHoveredNode] = useState<string|null>(null);
   const [mode, setMode] = useState<GraphMode>("2d");
+  const [pathChain, setPathChain] = useState<{ path: string; title: string; mastery: number }[] | null>(null);
+  const [loadingPath, setLoadingPath] = useState(false);
+  const [masteryMin, setMasteryMin] = useState(0);
+  const [bloomGraph, setBloomGraph] = useState("");
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [showRecommend, setShowRecommend] = useState(false);
+  const [loadingRec, setLoadingRec] = useState(false);
+
+const BLOOM_G = ["remember","understand","apply","analyze","evaluate","create"] as const;
+const BLOOM_GL: Record<string,string> = { remember:"記憶",understand:"理解",apply:"應用",analyze:"分析",evaluate:"評估",create:"創作" };
+const BLOOM_GC: Record<string,string> = { remember:"#94a3b8",understand:"#60a5fa",apply:"#34d399",analyze:"#fbbf24",evaluate:"#f97316",create:"#c084fc" };
   const svgRef = useRef<SVGSVGElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -212,10 +238,19 @@ export default function WikiGraph() {
         if (!sn||!tn) continue;
         const isHL = hov===e.source||hov===e.target;
         const w3d = edgeWidth(e as GraphEdge);
+        const rt = (e as GraphEdge).rel_type ?? "related";
+        const typeHex = EDGE_TYPE_COLORS[rt];
         const grad = ctx.createLinearGradient(sn.sx,sn.sy,tn.sx,tn.sy);
-        grad.addColorStop(0,isHL?"rgba(130,180,255,0.35)":"rgba(80,120,200,0.06)");
-        grad.addColorStop(.5,isHL?"rgba(150,200,255,0.55)":"rgba(100,150,220,0.13)");
-        grad.addColorStop(1,isHL?"rgba(130,180,255,0.35)":"rgba(80,120,200,0.06)");
+        if (typeHex) {
+          const rv=parseInt(typeHex.slice(1,3),16), gv=parseInt(typeHex.slice(3,5),16), bv=parseInt(typeHex.slice(5,7),16);
+          grad.addColorStop(0,isHL?`rgba(${rv},${gv},${bv},0.45)`:`rgba(${rv},${gv},${bv},0.10)`);
+          grad.addColorStop(.5,isHL?`rgba(${rv},${gv},${bv},0.65)`:`rgba(${rv},${gv},${bv},0.18)`);
+          grad.addColorStop(1,isHL?`rgba(${rv},${gv},${bv},0.45)`:`rgba(${rv},${gv},${bv},0.10)`);
+        } else {
+          grad.addColorStop(0,isHL?"rgba(130,180,255,0.35)":"rgba(80,120,200,0.06)");
+          grad.addColorStop(.5,isHL?"rgba(150,200,255,0.55)":"rgba(100,150,220,0.13)");
+          grad.addColorStop(1,isHL?"rgba(130,180,255,0.35)":"rgba(80,120,200,0.06)");
+        }
         ctx.beginPath(); ctx.moveTo(sn.sx,sn.sy); ctx.lineTo(tn.sx,tn.sy);
         ctx.strokeStyle=grad; ctx.lineWidth=isHL?w3d*0.8+0.5:w3d*0.5; ctx.stroke();
       }
@@ -359,6 +394,18 @@ export default function WikiGraph() {
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <button style={btnStyle} onClick={() => void load()} title="Refresh"><RefreshCw style={{ width: 14, height: 14 }} /></button>
+        <button style={{ ...btnStyle, background: showRecommend ? "rgba(250,204,21,0.15)" : "rgba(128,128,128,0.1)", color: showRecommend ? "#facc15" : "inherit" }}
+          title="下一步學習推薦"
+          onClick={async () => {
+            if (showRecommend) { setShowRecommend(false); return; }
+            setShowRecommend(true);
+            if (!recommendations.length) {
+              setLoadingRec(true);
+              try { const r = await wiki.nextToLearn(); setRecommendations(r ?? []); } catch (e) { console.error(e); }
+              setLoadingRec(false);
+            }
+          }}
+        >推薦</button>
         <div style={{ display: "flex", borderRadius: 6, border: "1px solid rgba(128,128,128,0.2)", overflow: "hidden", marginRight: 8 }}>
           {(["2d","3d"] as const).map(m => (
             <button key={m} onClick={() => setMode(m)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 12px", fontSize: 12, fontWeight: 500, cursor: "pointer", border: "none", background: mode===m ? "rgba(128,128,128,0.25)" : "transparent", color: "inherit" }}>
@@ -381,39 +428,164 @@ export default function WikiGraph() {
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
       {headerBar}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, marginBottom: 10, alignItems: "center" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12, marginBottom: 10, alignItems: "center" }}>
         {Object.entries(TYPE_COLORS).map(([type, color]) => (
-          <span key={type} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", backgroundColor: color }} />
+          <span key={type} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", backgroundColor: color }} />
             {type.charAt(0).toUpperCase()+type.slice(1)}
           </span>
         ))}
-        <span style={{ marginLeft: 8, paddingLeft: 12, borderLeft: "1px solid rgba(128,128,128,0.2)", color: "var(--color-text-tertiary,#888)" }}>
-          節點大小 = 被引用次數 · 連線粗細 = 共享標籤數
+        <span style={{ width: 1, height: 13, background: "rgba(128,128,128,0.25)", margin: "0 2px" }} />
+        {(["prerequisite","contains","related","applies_to"] as const).map(rt => {
+          const color = EDGE_TYPE_COLORS[rt] ?? "rgba(128,128,128,0.5)";
+          const directed = DIRECTED_TYPES.has(rt);
+          return (
+            <span key={rt} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <svg width="22" height="10" style={{ overflow: "visible", flexShrink: 0 }}>
+                <line x1="0" y1="5" x2={directed ? 14 : 22} y2="5" stroke={color} strokeWidth="1.5" strokeOpacity={rt === "related" ? 0.5 : 0.9} />
+                {directed && <polygon points="14,2 22,5 14,8" fill={color} opacity={0.9} />}
+              </svg>
+              {EDGE_LABELS[rt]}
+            </span>
+          );
+        })}
+        <span style={{ marginLeft: 4, color: "var(--color-text-tertiary,#888)" }}>
+          節點大小 = 被引用次數
         </span>
       </div>
+
+      {/* Node filter row */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", fontSize: 12, marginBottom: 6 }}>
+        <span style={{ color: "var(--color-text-tertiary,#888)", flexShrink: 0 }}>節點篩選：</span>
+        <label style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--color-text-secondary,#aaa)" }}>
+          熟練度 ≥
+          <select value={masteryMin} onChange={e => setMasteryMin(Number(e.target.value))}
+            style={{ fontSize: 11, padding: "2px 6px", borderRadius: 4, border: "1px solid rgba(128,128,128,0.2)", background: "rgba(128,128,128,0.06)", color: "inherit", cursor: "pointer" }}>
+            {[0,1,2,3,4,5].map(v => <option key={v} value={v}>{v === 0 ? "全部" : v}</option>)}
+          </select>
+        </label>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button onClick={() => setBloomGraph("")}
+            style={{ fontSize: 11, padding: "1px 8px", borderRadius: 9999, border: `1px solid ${!bloomGraph ? "rgba(128,128,128,0.5)" : "rgba(128,128,128,0.2)"}`, background: !bloomGraph ? "rgba(128,128,128,0.12)" : "transparent", cursor: "pointer", color: "inherit" }}>全部</button>
+          {BLOOM_G.map(b => (
+            <button key={b} onClick={() => setBloomGraph(bloomGraph === b ? "" : b)}
+              style={{ fontSize: 11, padding: "1px 8px", borderRadius: 9999, cursor: "pointer",
+                border: `1px solid ${bloomGraph === b ? BLOOM_GC[b] : "rgba(128,128,128,0.2)"}`,
+                background: bloomGraph === b ? `${BLOOM_GC[b]}22` : "transparent",
+                color: bloomGraph === b ? BLOOM_GC[b] : "var(--color-text-secondary,#aaa)",
+              }}>{BLOOM_GL[b]}</button>
+          ))}
+        </div>
+        {(masteryMin > 0 || bloomGraph) && (
+          <button onClick={() => { setMasteryMin(0); setBloomGraph(""); }}
+            style={{ fontSize: 11, padding: "1px 8px", borderRadius: 4, border: "1px solid rgba(128,128,128,0.2)", background: "transparent", cursor: "pointer", color: "var(--color-text-tertiary,#888)" }}>清除篩選</button>
+        )}
+      </div>
+
+      {/* Recommend panel */}
+      {showRecommend && (
+        <div style={{ marginBottom: 8, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(250,204,21,0.25)", background: "rgba(250,204,21,0.03)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#facc15" }}>下一步學習推薦</span>
+            <span style={{ fontSize: 10, color: "var(--color-text-tertiary,#888)" }}>前置依賴已達熟練度 3+</span>
+          </div>
+          {loadingRec && <span style={{ fontSize: 12, color: "var(--color-text-tertiary,#888)" }}>載入中…</span>}
+          {!loadingRec && recommendations.length === 0 && <span style={{ fontSize: 12, color: "var(--color-text-tertiary,#888)" }}>暫無推薦（需先在頁面設定 prerequisite 關係與 mastery 等級）</span>}
+          {!loadingRec && recommendations.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {recommendations.map(r => (
+                <button key={r.path}
+                  onClick={async () => {
+                    setLoadingPath(true);
+                    try { const res = await wiki.learningPath(r.path); setPathChain(res.chain ?? []); } catch (e) { console.error(e); }
+                    setLoadingPath(false);
+                  }}
+                  style={{ fontSize: 12, padding: "3px 10px", borderRadius: 9999, cursor: "pointer",
+                    border: "1px solid rgba(250,204,21,0.3)", background: "rgba(250,204,21,0.06)",
+                    color: "var(--color-text-primary,#fff)",
+                  }}
+                >
+                  {r.title.length > 18 ? r.title.slice(0,18)+"…" : r.title}
+                  {r.bloom && <span style={{ marginLeft: 4, fontSize: 9, color: BLOOM_GC[r.bloom] ?? "#888" }}>{BLOOM_GL[r.bloom]}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div ref={containerRef} style={{ position: "relative", overflow: "hidden", borderRadius: 8, border: `1px solid ${mode==="3d"?"rgba(255,255,255,0.06)":"rgba(128,128,128,0.15)"}`, background: mode==="3d"?"#05050e":"rgba(128,128,128,0.02)", height: 520 }}>
         <svg ref={svgRef} width="100%" height="100%" className="select-none" style={{ display: mode==="2d"?"block":"none" }}
           onMouseDown={handleSVGMouseDown} onMouseMove={handleSVGMouseMove} onMouseUp={handleSVGMouseUp} onMouseLeave={handleSVGMouseUp}
           onWheel={e => { e.preventDefault(); const rect=svgRef.current!.getBoundingClientRect(); applyZoom2D(e.clientX-rect.left,e.clientY-rect.top,-e.deltaY*.001); }}>
+          <defs>
+            {(["prerequisite","contains","applies_to"] as const).map(rt => (
+              [
+                <marker key={rt} id={`arr-${rt}`} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                  <polygon points="0 0, 8 3, 0 6" fill={EDGE_TYPE_COLORS[rt]} />
+                </marker>,
+                <marker key={`${rt}-hl`} id={`arr-${rt}-hl`} markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                  <polygon points="0 0, 8 3, 0 6" fill={EDGE_TYPE_COLORS_HL[rt]} />
+                </marker>,
+              ]
+            ))}
+            <marker id="arr-path" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill="#facc15" />
+            </marker>
+          </defs>
           <g data-graph transform={`translate(${offset2D.x},${offset2D.y}) scale(${scale2D})`}>
             {data?.edges.map((edge, i) => {
-              const nm=new Map(graphNodes.map(n=>[n.id,n])), src=nm.get(edge.source), tgt=nm.get(edge.target), hl=hoveredNode===edge.source||hoveredNode===edge.target;
+              const nm=new Map(graphNodes.map(n=>[n.id,n])), src=nm.get(edge.source), tgt=nm.get(edge.target);
+              const hl=hoveredNode===edge.source||hoveredNode===edge.target;
               const w = edgeWidth(edge);
-              return <line key={`e-${i}`} data-source={edge.source} data-target={edge.target} x1={src?.x??0} y1={src?.y??0} x2={tgt?.x??0} y2={tgt?.y??0} stroke={hl?"#ffffff":"currentColor"} strokeOpacity={hl?.7:.18} strokeWidth={hl?w+1:w} />;
+              const rt = edge.rel_type ?? "related";
+              const directed = DIRECTED_TYPES.has(rt);
+              const chainPaths = pathChain ? new Set(pathChain.map(p => p.path)) : null;
+              const inPathEdge = chainPaths?.has(edge.source) && chainPaths?.has(edge.target) && rt === "prerequisite";
+              const stroke = inPathEdge ? "#facc15"
+                : hl ? (EDGE_TYPE_COLORS_HL[rt] ?? "#ffffff")
+                : rt === "related" ? "currentColor" : (EDGE_TYPE_COLORS[rt] ?? "currentColor");
+              const opacity = inPathEdge ? 0.9 : hl ? 0.75 : rt === "related" ? 0.18 : 0.6;
+              const marker = (directed || inPathEdge) ? `url(#arr-${inPathEdge ? "path" : rt}${hl&&!inPathEdge?"-hl":""})` : undefined;
+              return (
+                <line key={`e-${i}`} data-source={edge.source} data-target={edge.target}
+                  x1={src?.x??0} y1={src?.y??0} x2={tgt?.x??0} y2={tgt?.y??0}
+                  stroke={stroke} strokeOpacity={opacity} strokeWidth={hl?w+1:w}
+                  markerEnd={marker} />
+              );
             })}
             {graphNodes.map(node => {
               const isHov=hoveredNode===node.id, color=TYPE_COLORS[node.type]??"#888", r=nodeRadius(node);
+              const m = node.mastery ?? 0;
+              const inPath = pathChain?.some(p => p.path === node.id);
+              const pathIdx = pathChain ? pathChain.findIndex(p => p.path === node.id) : -1;
+              const glowColor = m > 0 ? MASTERY_GLOW[m] : undefined;
+              const passFilter = (masteryMin === 0 || m >= masteryMin) && (!bloomGraph || (node as any).bloom === bloomGraph);
+              const dimmed = !passFilter && (masteryMin > 0 || bloomGraph !== "");
+              const nodeBloom: string = (node as any).bloom ?? "";
               return (
                 <g key={node.id}>
-                  <circle data-id={node.id} cx={node.x} cy={node.y} r={isHov?r+3:r} fill={color} fillOpacity={isHov?1:.75}
-                    stroke={isHov?"#fff":"none"} strokeWidth={2} style={{cursor:"grab"}}
+                  {/* mastery glow ring */}
+                  {m > 0 && <circle data-id={node.id} cx={node.x} cy={node.y} r={r+6+m} fill={glowColor} className="pointer-events-none" />}
+                  {/* path highlight ring */}
+                  {inPath && <circle data-id={node.id} cx={node.x} cy={node.y} r={r+4} fill="rgba(250,204,21,0.18)" stroke="#facc15" strokeWidth={1.5} className="pointer-events-none" />}
+                  <circle data-id={node.id} cx={node.x} cy={node.y} r={isHov?r+3:r} fill={color}
+                    fillOpacity={dimmed ? 0.08 : isHov?1:inPath?1:.75}
+                    stroke={inPath?"#facc15":isHov?"#fff":"none"} strokeWidth={2} style={{cursor: dimmed?"default":"pointer"}}
                     onMouseEnter={() => setHoveredNode(node.id)} onMouseLeave={() => setHoveredNode(null)}
-                    onMouseDown={e => handleMouseDown2D(node.id, e)} />
-                  {isHov && (
-                    <text data-id={node.id} x={node.x} y={node.y-r-6} textAnchor="middle" fill="currentColor" fontSize={11} className="pointer-events-none">
+                    onMouseDown={e => handleMouseDown2D(node.id, e)}
+                    onClick={async () => {
+                      if (pathChain?.some(p => p.path === node.id)) { setPathChain(null); return; }
+                      setLoadingPath(true);
+                      try { const r2 = await wiki.learningPath(node.id); setPathChain(r2.chain ?? []); }
+                      catch (e) { console.error(e); }
+                      setLoadingPath(false);
+                    }} />
+                  {(isHov || inPath) && !dimmed && (
+                    <text data-id={node.id} x={node.x} y={node.y-r-6} textAnchor="middle" fill={inPath?"#facc15":"currentColor"} fontSize={11} className="pointer-events-none">
                       {node.title.length>26?node.title.slice(0,26)+"…":node.title}
-                      {node.inbound_count > 0 && ` (←${node.inbound_count})`}
+                      {inPath && pathIdx >= 0 && ` [${pathIdx+1}]`}
+                      {isHov && nodeBloom && ` · ${BLOOM_GL[nodeBloom]??nodeBloom}`}
                     </text>
                   )}
                 </g>
@@ -424,7 +596,29 @@ export default function WikiGraph() {
         <canvas ref={canvasRef} className="select-none" style={{ display: mode==="3d"?"block":"none", width:"100%", height:"100%" }}
           onMouseDown={handle3DMouseDown} onMouseMove={handle3DMouseMove} onMouseUp={handle3DMouseUp} onMouseLeave={handle3DMouseUp} onWheel={handle3DWheel} />
         {!graphNodes.length && <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}><p className="wiki-muted">No graph data available.</p></div>}
+        {loadingPath && <div style={{ position:"absolute", bottom:12, left:"50%", transform:"translateX(-50%)", background:"rgba(0,0,0,0.6)", borderRadius:6, padding:"4px 12px", fontSize:12, color:"#facc15" }}>載入學習路徑…</div>}
       </div>
+
+      {/* Learning path panel */}
+      {pathChain && pathChain.length > 0 && (
+        <div style={{ marginTop: 10, padding: "10px 14px", borderRadius: 8, border: "1px solid rgba(250,204,21,0.3)", background: "rgba(250,204,21,0.04)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#facc15" }}>學習路徑（{pathChain.length} 步）</span>
+            <button onClick={() => setPathChain(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(128,128,128,0.6)", fontSize: 16, lineHeight: 1, padding: 2 }}>×</button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            {pathChain.map((p, i) => (
+              <span key={p.path} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                {i > 0 && <span style={{ color: "#facc15", opacity: 0.5, fontSize: 10 }}>→</span>}
+                <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 9999, background: `rgba(250,204,21,${0.05 + i * 0.04})`, border: "1px solid rgba(250,204,21,0.25)", color: "var(--color-text-primary,#fff)" }}>
+                  {p.title.length > 20 ? p.title.slice(0,20)+"…" : p.title}
+                  {p.mastery > 0 && <span style={{ marginLeft: 4, fontSize: 10, color: "#facc15" }}>{'★'.repeat(Math.min(p.mastery,3))}</span>}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

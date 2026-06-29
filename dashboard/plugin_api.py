@@ -550,7 +550,16 @@ async def get_pages(
     parser = _get_parser()
     if not parser.is_available():
         raise HTTPException(503, "Wiki is not configured.")
-    return parser.get_pages(page_type=type, tag=tag, confidence=confidence, sort=sort, order=order)
+    pages = parser.get_pages(page_type=type, tag=tag, confidence=confidence, sort=sort, order=order)
+    try:
+        extras = _read_page_extras(Path(parser.wiki_path))
+        for page in pages:
+            ex = extras.get(page.get("path", ""), {})
+            page["mastery"] = ex.get("mastery", 0)
+            page["bloom"]   = ex.get("bloom", "")
+    except Exception:
+        pass
+    return pages
 
 @router.get("/pages/{path:path}")
 async def get_page(path: str) -> dict[str, Any]:
@@ -665,6 +674,388 @@ async def delete_page(path: str) -> dict[str, str]:
     _invalidate_parser()
     return {"message": f"Deleted: {path}", "path": path}
 
+class _SaveRelationsRequest(BaseModel):
+    relations: list[dict]
+
+
+@router.post("/pages/{page_path:path}/classify-relations")
+async def classify_page_relations(page_path: str) -> dict:
+    """使用 LLM 將頁面的 wikilink 分類為語義邊類型。"""
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    wiki_path = Path(parser.wiki_path)
+    # 支援 concepts/ 前綴或直接 stem
+    stem = Path(page_path).stem
+    md_file = wiki_path / "concepts" / f"{stem}.md"
+    if not md_file.exists():
+        raise HTTPException(404, f"Page not found: {page_path}")
+
+    text = md_file.read_text(encoding="utf-8")
+    wikilinks = list(dict.fromkeys(re.findall(r'\[\[([^\]|]+?)(?:\|[^\]]+)?\]\]', text)))
+    if not wikilinks:
+        return {"suggestions": []}
+
+    fm: dict = {}
+    content_start = 0
+    import yaml as _yaml
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            fm = _yaml.safe_load(text[4:end]) or {}
+            content_start = end + 4
+    title = fm.get("title", stem)
+    excerpt = text[content_start:content_start + 500].strip()
+
+    links_list = "\n".join(f"- {l.strip()}" for l in wikilinks)
+    prompt = f"""你是知識管理助手，正在分析一篇個人知識庫文章。
+
+文章標題：{title}
+內容摘要：{excerpt[:400]}
+
+請將以下每個 wikilink 與本文的關係分類為其中一種：
+- prerequisite：理解本文「之前」必須先看的概念（本文依賴對方）
+- contains：本文包含或覆蓋此連結作為子主題或組成部分
+- applies_to：本文的概念「應用於」此連結所代表的場景
+- related：一般關係，重要性相近，無明顯依賴方向
+
+要分類的 wikilinks：
+{links_list}
+
+只回傳 JSON 陣列，不要有任何說明或 markdown 格式：
+[{{"target": "link名稱", "type": "related|prerequisite|contains|applies_to", "reason": "簡短理由"}}]"""
+
+    try:
+        from agent.auxiliary_client import get_async_text_auxiliary_client
+        client, model = get_async_text_auxiliary_client("wiki_tars")
+        if not client:
+            raise RuntimeError("No LLM configured")
+        resp = await client.chat.completions.create(
+            model=model or "claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=800,
+        )
+        raw = resp.choices[0].message.content or "[]"
+        start = raw.find("[")
+        end_idx = raw.rfind("]") + 1
+        suggestions = json.loads(raw[start:end_idx]) if start >= 0 and end_idx > start else []
+    except Exception as exc:
+        logger.warning("classify_page_relations LLM error: %s", exc)
+        suggestions = []
+
+    return {"suggestions": suggestions}
+
+
+@router.put("/pages/{page_path:path}/relations")
+async def save_page_relations(page_path: str, req: _SaveRelationsRequest) -> dict:
+    """將 relations 寫入頁面 frontmatter。"""
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    wiki_path = Path(parser.wiki_path)
+    stem = Path(page_path).stem
+    md_file = wiki_path / "concepts" / f"{stem}.md"
+    if not md_file.exists():
+        raise HTTPException(404, f"Page not found: {page_path}")
+
+    import yaml as _yaml
+    text = md_file.read_text(encoding="utf-8")
+    VALID_TYPES = {"prerequisite", "contains", "related", "applies_to"}
+    clean = [{"target": r["target"], "type": r["type"]} for r in req.relations if r.get("target") and r.get("type") in VALID_TYPES]
+
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            fm = _yaml.safe_load(text[4:end]) or {}
+            rest = text[end + 4:]
+            if clean:
+                fm["relations"] = clean
+            else:
+                fm.pop("relations", None)
+            new_fm = _yaml.dump(fm, allow_unicode=True, default_flow_style=False).rstrip()
+            md_file.write_text(f"---\n{new_fm}\n---{rest}", encoding="utf-8")
+            _invalidate_parser()
+            return {"ok": True, "relations": clean}
+
+    raise HTTPException(400, "Page has no frontmatter")
+
+
+class _SetMasteryRequest(BaseModel):
+    mastery: int
+
+class _SetBloomRequest(BaseModel):
+    bloom: str
+
+_VALID_BLOOM = {"remember", "understand", "apply", "analyze", "evaluate", "create", ""}
+
+
+@router.put("/pages/{page_path:path}/bloom")
+async def set_page_bloom(page_path: str, req: _SetBloomRequest) -> dict:
+    """將 bloom 層次寫入 frontmatter。"""
+    if req.bloom not in _VALID_BLOOM:
+        raise HTTPException(400, f"Invalid bloom level: {req.bloom}")
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    wiki_path = Path(parser.wiki_path)
+    stem = Path(page_path).stem
+    md_file = wiki_path / "concepts" / f"{stem}.md"
+    if not md_file.exists():
+        raise HTTPException(404, f"Page not found: {page_path}")
+    import yaml as _yaml
+    text = md_file.read_text(encoding="utf-8")
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            fm = _yaml.safe_load(text[4:end]) or {}
+            rest = text[end + 4:]
+            if req.bloom:
+                fm["bloom"] = req.bloom
+            else:
+                fm.pop("bloom", None)
+            new_fm = _yaml.dump(fm, allow_unicode=True, default_flow_style=False).rstrip()
+            md_file.write_text(f"---\n{new_fm}\n---{rest}", encoding="utf-8")
+            _invalidate_parser()
+            return {"ok": True, "bloom": req.bloom}
+    raise HTTPException(400, "Page has no frontmatter")
+
+
+@router.post("/pages/{page_path:path}/classify-bloom")
+async def classify_page_bloom(page_path: str) -> dict:
+    """使用 LLM 推斷頁面的布魯姆認知層次。"""
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    wiki_path = Path(parser.wiki_path)
+    stem = Path(page_path).stem
+    md_file = wiki_path / "concepts" / f"{stem}.md"
+    if not md_file.exists():
+        raise HTTPException(404, f"Page not found: {page_path}")
+
+    import yaml as _yaml
+    text = md_file.read_text(encoding="utf-8")
+    fm: dict = {}
+    content_start = 0
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            fm = _yaml.safe_load(text[4:end]) or {}
+            content_start = end + 4
+    title = fm.get("title", stem)
+    excerpt = text[content_start:content_start + 600].strip()
+
+    prompt = f"""你是知識管理助手，請根據文章內容判斷它對讀者的認知層次需求（布魯姆分類法）。
+
+文章標題：{title}
+內容摘要：{excerpt[:500]}
+
+六個層次定義：
+- remember（記憶）：識別、列舉事實或定義
+- understand（理解）：解釋、總結、分類概念
+- apply（應用）：在新情境使用已知概念或程序
+- analyze（分析）：拆解、比較、區分組件或關係
+- evaluate（評估）：評判、論證、做出有根據的決策
+- create（創作）：設計、組合、生成新想法或作品
+
+只回傳 JSON，不要有說明或 markdown：
+{{"bloom": "remember|understand|apply|analyze|evaluate|create", "reason": "簡短理由"}}"""
+
+    try:
+        from agent.auxiliary_client import get_async_text_auxiliary_client
+        client, model = get_async_text_auxiliary_client("wiki_tars")
+        if not client:
+            raise RuntimeError("No LLM configured")
+        resp = await client.chat.completions.create(
+            model=model or "claude-haiku-4-5-20251001",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+        )
+        raw = resp.choices[0].message.content or "{}"
+        start = raw.find("{"); end_idx = raw.rfind("}") + 1
+        result = json.loads(raw[start:end_idx]) if start >= 0 and end_idx > start else {}
+        bloom = result.get("bloom", "")
+        if bloom not in _VALID_BLOOM:
+            bloom = ""
+        return {"bloom": bloom, "reason": result.get("reason", "")}
+    except Exception as exc:
+        logger.warning("classify_page_bloom error: %s", exc)
+        return {"bloom": "", "reason": ""}
+
+
+@router.get("/next-to-learn")
+async def get_next_to_learn(
+    min_prereq: int = Query(3, alias="min_prereq"),
+    max_self: int = Query(1, alias="max_self"),
+    limit: int = Query(6),
+) -> list[dict]:
+    """推薦：前置依賴皆達最低熟練度，但自身尚未學習的頁面。"""
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    wiki_path = Path(parser.wiki_path)
+    relation_map = _read_page_relations(wiki_path)
+    extras = _read_page_extras(wiki_path)
+    pages = parser.get_pages()
+    page_map = {p["path"]: p for p in pages}
+
+    prereq_map: dict[str, list[str]] = {}
+    for src, rels in relation_map.items():
+        for rel in rels:
+            if rel.get("type") == "prerequisite":
+                prereq_map.setdefault(src, []).append(rel["target"])
+
+    results = []
+    for path in page_map:
+        self_mastery = extras.get(path, {}).get("mastery", 0)
+        if self_mastery > max_self:
+            continue
+        prereqs = prereq_map.get(path, [])
+        if not prereqs:
+            continue
+        if all(extras.get(p, {}).get("mastery", 0) >= min_prereq for p in prereqs):
+            pd = page_map[path]
+            results.append({
+                "path":         path,
+                "title":        pd.get("title", path),
+                "type":         pd.get("type", "concept"),
+                "mastery":      self_mastery,
+                "bloom":        extras.get(path, {}).get("bloom", ""),
+                "prereq_count": len(prereqs),
+            })
+
+    results.sort(key=lambda x: (-x["prereq_count"], x["title"]))
+    return results[:limit]
+
+
+@router.put("/pages/{page_path:path}/mastery")
+async def set_page_mastery(page_path: str, req: _SetMasteryRequest) -> dict:
+    """將 mastery 等級（0-5）寫入 frontmatter。"""
+    if not 0 <= req.mastery <= 5:
+        raise HTTPException(400, "mastery must be 0-5")
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    wiki_path = Path(parser.wiki_path)
+    stem = Path(page_path).stem
+    md_file = wiki_path / "concepts" / f"{stem}.md"
+    if not md_file.exists():
+        raise HTTPException(404, f"Page not found: {page_path}")
+    import yaml as _yaml
+    text = md_file.read_text(encoding="utf-8")
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            fm = _yaml.safe_load(text[4:end]) or {}
+            rest = text[end + 4:]
+            fm["mastery"] = req.mastery
+            new_fm = _yaml.dump(fm, allow_unicode=True, default_flow_style=False).rstrip()
+            md_file.write_text(f"---\n{new_fm}\n---{rest}", encoding="utf-8")
+            _invalidate_parser()
+            return {"ok": True, "mastery": req.mastery}
+    raise HTTPException(400, "Page has no frontmatter")
+
+
+@router.get("/pages/{page_path:path}/learning-path")
+async def get_learning_path(page_path: str) -> dict:
+    """沿 prerequisite 邊反向 DFS，回傳從前置依賴到目標頁的學習順序。"""
+    parser = _get_parser()
+    if not parser.is_available():
+        raise HTTPException(503, "Wiki is not configured.")
+    wiki_path = Path(parser.wiki_path)
+    relation_map = _read_page_relations(wiki_path)
+    pages = parser.get_pages()
+    page_map = {p["path"]: p for p in pages}
+    extras = _read_page_extras(wiki_path)
+
+    # prereq_map[A] = [B, C] 表示 A 需要先學 B, C
+    prereq_map: dict[str, list[str]] = {}
+    for src, rels in relation_map.items():
+        for rel in rels:
+            if rel.get("type") == "prerequisite":
+                prereq_map.setdefault(src, []).append(rel["target"])
+
+    # DFS post-order → 深層前置節點先出，目標頁最後
+    visited: set[str] = set()
+    result: list[str] = []
+
+    def dfs(node: str) -> None:
+        if node in visited:
+            return
+        visited.add(node)
+        for prereq in prereq_map.get(node, []):
+            dfs(prereq)
+        result.append(node)
+
+    dfs(page_path)
+
+    chain = []
+    for p in result:
+        pd = page_map.get(p, {})
+        ex = extras.get(p, {})
+        chain.append({
+            "path":    p,
+            "title":   pd.get("title", p.split("/")[-1]),
+            "type":    pd.get("type", "concept"),
+            "mastery": ex.get("mastery", 0),
+        })
+
+    return {"path": page_path, "chain": chain, "depth": len(chain) - 1}
+
+
+def _read_page_extras(wiki_path: "Path") -> dict[str, dict]:
+    """一次讀取所有 concept 頁面的 mastery + bloom frontmatter 欄位。"""
+    import yaml as _yaml
+    result: dict[str, dict] = {}
+    concepts_dir = wiki_path / "concepts"
+    if not concepts_dir.exists():
+        return result
+    for md_file in concepts_dir.glob("*.md"):
+        try:
+            text = md_file.read_text(encoding="utf-8")
+            if not text.startswith("---\n"):
+                continue
+            end = text.find("\n---", 4)
+            if end == -1:
+                continue
+            fm = _yaml.safe_load(text[4:end]) or {}
+            path = f"concepts/{md_file.stem}"
+            result[path] = {
+                "mastery": max(0, min(5, int(fm.get("mastery", 0)))),
+                "bloom":   str(fm.get("bloom", "")),
+            }
+        except Exception:
+            pass
+    return result
+
+
+def _read_page_relations(wiki_path: "Path") -> dict[str, list[dict]]:
+    """讀取所有頁面 frontmatter 中的 relations: 欄位，回傳 {path: [{target, type}]}。"""
+    import yaml as _yaml
+    result: dict[str, list[dict]] = {}
+    concepts_dir = wiki_path / "concepts"
+    if not concepts_dir.exists():
+        return result
+    for md_file in concepts_dir.glob("*.md"):
+        try:
+            text = md_file.read_text(encoding="utf-8")
+            if not text.startswith("---\n"):
+                continue
+            end = text.find("\n---", 4)
+            if end == -1:
+                continue
+            fm = _yaml.safe_load(text[4:end]) or {}
+            rels = fm.get("relations", [])
+            if isinstance(rels, list) and rels:
+                path = f"concepts/{md_file.stem}"
+                result[path] = [
+                    r for r in rels
+                    if isinstance(r, dict) and r.get("target") and r.get("type")
+                ]
+        except Exception:
+            pass
+    return result
+
+
 @router.get("/graph")
 async def get_graph() -> dict[str, list[dict[str, Any]]]:
     parser = _get_parser()
@@ -677,13 +1068,62 @@ async def get_graph() -> dict[str, list[dict[str, Any]]]:
     tag_map: dict[str, set[str]] = {p["path"]: set(p.get("tags", [])) for p in pages}
     inbound_map: dict[str, int] = {p["path"]: p.get("inbound_link_count", 0) for p in pages}
 
+    try:
+        extras = _read_page_extras(Path(parser.wiki_path))
+    except Exception:
+        extras = {}
+
     for node in raw["nodes"]:
         node["inbound_count"] = inbound_map.get(node["id"], 0)
+        ex = extras.get(node["id"], {})
+        node["mastery"] = ex.get("mastery", 0)
+        node["bloom"]   = ex.get("bloom", "")
 
+    # 預設所有 wikilink 邊為 related
     for edge in raw["edges"]:
         src_tags = tag_map.get(edge["source"], set())
         tgt_tags = tag_map.get(edge["target"], set())
         edge["shared_tags"] = len(src_tags & tgt_tags)
+        edge["rel_type"] = "related"
+
+    # 讀取 frontmatter relations: 覆蓋或新增語義邊
+    try:
+        relation_map = _read_page_relations(Path(parser.wiki_path))
+    except Exception:
+        relation_map = {}
+
+    existing = {(e["source"], e["target"]): e for e in raw["edges"]}
+    all_paths = {n["id"] for n in raw["nodes"]}
+    VALID_TYPES = {"prerequisite", "contains", "related", "applies_to"}
+
+    for src_path, rels in relation_map.items():
+        if src_path not in all_paths:
+            continue
+        for rel in rels:
+            tgt = rel.get("target", "").strip()
+            if not tgt.startswith("concepts/"):
+                tgt = f"concepts/{tgt}"
+            rel_type = rel.get("type", "related")
+            if rel_type not in VALID_TYPES:
+                rel_type = "related"
+            if tgt not in all_paths:
+                continue
+            key = (src_path, tgt)
+            rev = (tgt, src_path)
+            if key in existing:
+                existing[key]["rel_type"] = rel_type
+            elif rev in existing and rel_type == "related":
+                pass  # 雙向 related 不重複
+            else:
+                new_edge = {
+                    "source": src_path,
+                    "target": tgt,
+                    "type": "",
+                    "shared_tags": len(tag_map.get(src_path, set()) & tag_map.get(tgt, set())),
+                    "rel_type": rel_type,
+                }
+                raw["edges"].append(new_edge)
+                existing[key] = new_edge
 
     return raw
 
@@ -734,7 +1174,7 @@ async def upload_file(file: UploadFile = File(...), type: str = Query("auto"), f
         raise HTTPException(503, "Wiki is not configured.")
     if not file.filename:
         raise HTTPException(400, "No filename provided.")
-    supported_extensions = ['.md', '.markdown', '.pdf', '.pptx', '.xlsx', '.png', '.jpg', '.jpeg', '.gif', '.webp']
+    supported_extensions = ['.md', '.markdown', '.txt', '.pdf', '.pptx', '.xlsx', '.png', '.jpg', '.jpeg', '.gif', '.webp']
     file_ext = '.' + file.filename.split('.')[-1].lower()
     if file_ext not in supported_extensions:
         raise HTTPException(400, f"Unsupported file format: {file_ext}")
@@ -823,14 +1263,72 @@ async def import_url(body: ImportUrlRequest) -> dict:
         fetch_url = github_info["raw_url"] if github_info else clean_url
         try:
             import requests as _requests
-            _resp = _requests.get(fetch_url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html,*/*"}, timeout=30, allow_redirects=True)
-            _resp.raise_for_status()
-            raw_bytes, content_type = _resp.content, _resp.headers.get("Content-Type", "")
+            _sess = _requests.Session()
+            _sess.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Sec-Ch-Ua": '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Cache-Control": "max-age=0",
+                "Upgrade-Insecure-Requests": "1",
+                "DNT": "1",
+                "Connection": "keep-alive",
+            })
+
+            # --- 第一步：直連 ---
+            _resp = None
+            _need_jina = False
+            try:
+                _resp = _sess.get(fetch_url, timeout=20, allow_redirects=True)
+                if _resp.status_code in (400, 403, 429, 503):
+                    _sess.headers.update({
+                        "Referer": "https://www.google.com/",
+                        "Sec-Fetch-Site": "cross-site",
+                        "Origin": "https://www.google.com",
+                    })
+                    _resp = _sess.get(fetch_url, timeout=20, allow_redirects=True)
+                # JS challenge / bot wall / 任何非 2xx
+                _need_jina = not _resp.ok or (
+                    b"window.onload" in _resp.content[:2000] and
+                    _resp.content[:200].lower().lstrip().startswith(b"<html")
+                )
+            except Exception:
+                _need_jina = True  # timeout / SSL error → 直接交給 Jina
+
+            # --- 第二步：Jina Reader fallback ---
+            _jina_title = ""
+            if _need_jina and not github_info:
+                _jina_r = _requests.get(
+                    f"https://r.jina.ai/{fetch_url}",
+                    headers={"Accept": "text/plain", "X-Return-Format": "markdown"},
+                    timeout=50,
+                )
+                _jina_r.raise_for_status()
+                _jt = _jina_r.text
+                _tm = re.search(r'^Title:\s*(.+)$', _jt, re.MULTILINE)
+                _jina_title = _tm.group(1).strip() if _tm else ""
+                _cm = _jt.find("Markdown Content:")
+                _jina_md = _jt[_cm + len("Markdown Content:"):].strip() if _cm >= 0 else _jt
+                raw_bytes, content_type = _jina_md.encode("utf-8"), "text/plain"
+            else:
+                if _resp is None:
+                    raise HTTPException(400, "Failed to fetch URL: no response")
+                _resp.raise_for_status()
+                raw_bytes, content_type = _resp.content, _resp.headers.get("Content-Type", "")
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(400, f"Failed to fetch URL: {e}")
-        page_title = ""
+        page_title = _jina_title
         is_html = "text/html" in content_type or raw_bytes.lstrip()[:15].lower().startswith((b"<!doctype", b"<html"))
-        if is_html and not github_info:
+        if not _jina_title and is_html and not github_info:
             md_text, page_title = _html_to_markdown(raw_bytes, clean_url)
             content = md_text.encode("utf-8") if isinstance(md_text, str) else md_text
         else:
@@ -1090,33 +1588,326 @@ def _save_boards(boards: list[dict]) -> None:
     p = _mandalart_path()
     p.write_text(json.dumps(boards, ensure_ascii=False, indent=2), encoding="utf-8")
 
+def _shadow_boards_dir() -> "Path | None":
+    parser = _get_parser()
+    if parser and parser.is_available():
+        d = Path(parser.wiki_path) / "boards"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    return None
+
+def _write_shadow_md(board: dict) -> None:
+    boards_dir = _shadow_boards_dir()
+    if not boards_dir:
+        return
+    cells = board.get("cells") or [""] * 9
+    center = cells[0] if cells else board["title"]
+    aspects = [c for c in cells[1:] if c]
+    safe = re.sub(r"[^\w一-鿿]", "_", board["title"])[:40]
+    fname = f"{board['id']}_{safe}.md"
+    lines = ["---",
+             f'title: {board["title"]}（九宮格）',
+             "type: mandalart",
+             f'board_source: {board.get("source", "manual")}']
+    if board.get("category"):
+        lines.append(f'category: {board["category"]}')
+    if board.get("source_page"):
+        lines.append(f'source_page: {board["source_page"]}')
+    lines += [f'created: {board.get("created", "")}',
+              f'updated: {board.get("updated", "")}',
+              "---", "",
+              f'# {board["title"]}', "",
+              f"中心主題：{center}", ""]
+    if aspects:
+        lines += ["## 面向", ""] + [f"- {a}" for a in aspects]
+    (boards_dir / fname).write_text("\n".join(lines), encoding="utf-8")
+
+def _delete_shadow_md(board_id: str) -> None:
+    boards_dir = _shadow_boards_dir()
+    if not boards_dir:
+        return
+    for f in boards_dir.glob(f"{board_id}_*.md"):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
 class MandalartCreateRequest(BaseModel):
     title: str = "新曼陀羅"
     cells: list[str] = [""] * 9
+    source: str = "manual"
+    category: str = ""
+    source_page: str = ""
+    generated_at: str = ""
+    linked_from_ai: str = ""
 
 class MandalartUpdateRequest(BaseModel):
     title: str | None = None
     cells: list[str] | None = None
 
+class MandalartGenerateRequest(BaseModel):
+    source_page: str
+
 @router.get("/mandalart")
 async def list_mandalart() -> list[dict]:
     boards = _load_boards()
-    return [{"id": b["id"], "title": b["title"], "created": b["created"], "updated": b["updated"]} for b in boards]
+    return [{"id": b["id"], "title": b["title"], "created": b["created"], "updated": b["updated"],
+             "source": b.get("source", "manual"), "category": b.get("category", "")} for b in boards]
 
 @router.post("/mandalart")
 async def create_mandalart(req: MandalartCreateRequest) -> dict:
     boards = _load_boards()
     now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-    board = {
+    board: dict = {
         "id": str(_uuid.uuid4())[:8],
         "title": req.title,
         "cells": (req.cells + [""] * 9)[:9],
         "created": now,
         "updated": now,
+        "source": req.source,
     }
+    if req.category:
+        board["category"] = req.category
+    if req.source_page:
+        board["source_page"] = req.source_page
+    if req.generated_at:
+        board["generated_at"] = req.generated_at
+    if req.linked_from_ai:
+        board["linked_from_ai"] = req.linked_from_ai
     boards.append(board)
     _save_boards(boards)
+    _write_shadow_md(board)
     return board
+
+@router.get("/mandalart/wiki-pages")
+async def get_mandalart_wiki_pages() -> list[dict]:
+    """回傳適合生成九宮格的 concept 頁面及其 AI board 狀態。
+    過濾條件：type 屬於 concept/framework/entity/comparison/query，且內容長度 > 300 字。
+    """
+    parser = _get_parser()
+    if not parser or not parser.is_available():
+        return []
+    import yaml as _yaml
+    wiki_path = Path(parser.wiki_path)
+    all_pages = parser.get_pages()
+    boards = _load_boards()
+    ai_board_map = {b.get("source_page", ""): b for b in boards if b.get("source") == "ai"}
+    _CONCEPT_TYPES = {"concept", "framework", "entity", "comparison", "query"}
+    result = []
+    for p in all_pages:
+        path = p.get("path", "")
+        # 只看 concepts/ 目錄
+        if not path.startswith("concepts/"):
+            continue
+        stem = path.replace("concepts/", "")
+        md_file = wiki_path / "concepts" / f"{stem}.md"
+        if not md_file.exists():
+            continue
+        try:
+            raw = md_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # 讀 frontmatter 判斷 type
+        page_type = ""
+        body_len = len(raw)
+        if raw.startswith("---\n"):
+            end = raw.find("\n---", 4)
+            if end > 0:
+                try:
+                    fm = _yaml.safe_load(raw[4:end]) or {}
+                    page_type = str(fm.get("type", "")).lower()
+                    body_len = len(raw[end + 4:].strip())
+                except Exception:
+                    pass
+        # 過濾：type 需是概念類型 OR body 夠長（表示有實質內容）
+        if page_type and page_type not in _CONCEPT_TYPES and body_len < 500:
+            continue
+        if body_len < 200:  # 內容太短的直接跳過
+            continue
+        board = ai_board_map.get(path)
+        result.append({
+            "path": path,
+            "title": p.get("title", stem),
+            "inbound_count": p.get("inboundCount", 0) or p.get("inbound_count", 0),
+            "has_board": board is not None,
+            "board_id": board["id"] if board else None,
+        })
+    result.sort(key=lambda x: x["inbound_count"], reverse=True)
+    return result
+
+@router.post("/mandalart/generate")
+async def generate_mandalart(req: MandalartGenerateRequest) -> dict:
+    parser = _get_parser()
+    if not parser or not parser.is_available():
+        raise HTTPException(503, "Wiki parser 不可用")
+    wiki_path = Path(parser.wiki_path)
+    stem = req.source_page.replace("concepts/", "").replace(".md", "")
+    md_file = wiki_path / "concepts" / f"{stem}.md"
+    if not md_file.exists():
+        raise HTTPException(404, f"找不到頁面：{req.source_page}")
+    raw_text = md_file.read_text(encoding="utf-8")
+    import yaml as _yaml
+    title = stem
+    body = raw_text
+    source_tags: set[str] = set()
+    if raw_text.startswith("---\n"):
+        end = raw_text.find("\n---", 4)
+        if end > 0:
+            fm = _yaml.safe_load(raw_text[4:end]) or {}
+            title = fm.get("title", stem)
+            body = raw_text[end + 4:].strip()
+            raw_tags = fm.get("tags") or []
+            source_tags = set(raw_tags if isinstance(raw_tags, list) else [])
+
+    all_pages = parser.get_pages()
+
+    # 找相關頁面：tag 重疊 ≥ 2 或有 wikilink 連結
+    scored: list[tuple[dict, int]] = []
+    for p in all_pages:
+        if p.get("path") == req.source_page or p.get("path") == f"concepts/{stem}":
+            continue
+        p_tags = set(p.get("tags") or [])
+        tag_score = len(source_tags & p_tags)
+        links = set((p.get("inboundLinks") or []) + (p.get("outboundLinks") or []))
+        link_score = 3 if (req.source_page in links or f"concepts/{stem}" in links) else 0
+        total = tag_score + link_score
+        if total >= 2:
+            scored.append((p, total))
+    scored.sort(key=lambda x: x[1], reverse=True)
+    related_pages = scored[:6]  # 最多 6 篇相關頁面
+
+    def _extract_body(path_str: str) -> str:
+        f = wiki_path / f"{path_str}.md"
+        if not f.exists():
+            return ""
+        t = f.read_text(encoding="utf-8")
+        if t.startswith("---\n"):
+            e = t.find("\n---", 4)
+            return t[e + 4:].strip()[:700] if e > 0 else t[:700]
+        return t[:700]
+
+    # 組合 related_content：主頁 + 相關頁
+    sections: list[str] = [f"【{title}（主要頁面）】\n{body[:1200]}"]
+    for (p, score) in related_pages:
+        pbody = _extract_body(p["path"])
+        if pbody:
+            sections.append(f"【{p.get('title', p['path'])}（相關筆記，關聯度 {score}）】\n{pbody}")
+    related_content = "\n\n---\n\n".join(sections)
+
+    from agent.auxiliary_client import get_async_text_auxiliary_client
+    client, model = get_async_text_auxiliary_client("wiki_tars")
+    if not client:
+        raise HTTPException(503, "LLM 未設定")
+    prompt = f"""核心概念：{title}
+
+Wiki 相關筆記（共 {len(sections)} 篇）：
+
+{related_content}
+
+任務：從以上筆記提煉 8 個面向，每個面向用「標題 | 重點1 | 重點2 | 重點3」格式表示（用 | 分隔，不要換行），標題 ≤12 字，每條重點 ≤18 字。
+分類選：AI & 技術 / 知識管理 / 規劃執行 / 個人成長 / 其他"""
+
+    resp = await client.chat.completions.create(
+        model=model or "claude-haiku-4-5-20251001",
+        messages=[
+            {"role": "system", "content": (
+                '只輸出一行緊湊 JSON，無縮排無換行，禁止任何說明文字：\n'
+                '{"cells":["核心概念","A|重1|重2|重3","B|重1|重2|重3","C|重1|重2|重3","D|重1|重2|重3","E|重1|重2|重3","F|重1|重2|重3","G|重1|重2|重3","H|重1|重2|重3"],"category":"分類"}'
+            )},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=5000,
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+
+    def _extract_result(text: str) -> dict:
+        # 1. 從末尾往前找最後一個完整 {...}
+        last_end = text.rfind("}")
+        if last_end >= 0:
+            depth = 0
+            for i in range(last_end, -1, -1):
+                if text[i] == "}": depth += 1
+                elif text[i] == "{": depth -= 1
+                if depth == 0:
+                    try:
+                        p = json.loads(text[i:last_end + 1])
+                        if "cells" in p:
+                            return p
+                    except Exception:
+                        pass
+                    break
+        # 2. 從前往後找第一個完整 {...}
+        start = text.find("{")
+        if start >= 0:
+            depth = 0
+            for i, ch in enumerate(text[start:], start):
+                if ch == "{": depth += 1
+                elif ch == "}": depth -= 1
+                if depth == 0:
+                    try:
+                        p = json.loads(text[start:i + 1])
+                        if "cells" in p:
+                            return p
+                    except Exception:
+                        pass
+                    break
+        # 3. JSON 被截斷：從文字中抓出已完成的 cells 字串
+        cells_m = re.search(r'"cells"\s*:\s*\[([^\]]*)', text, re.DOTALL)
+        cat_m = re.search(r'"category"\s*:\s*"([^"]+)"', text)
+        if cells_m:
+            raw_arr = cells_m.group(1)
+            cells_found = re.findall(r'"((?:[^"\\]|\\.)*)"', raw_arr)
+            if len(cells_found) >= 2:
+                return {"cells": cells_found, "category": cat_m.group(1) if cat_m else "其他"}
+        return {}
+
+    result = _extract_result(raw)
+    if not result or "cells" not in result or len(result["cells"]) < 2:
+        raise HTTPException(500, f"LLM 回傳格式錯誤：{raw[:300]}")
+    cells = result.get("cells", [])
+    cells = [(str(c).replace(" | ", "\n• ").replace("| ", "\n• ") if i > 0 else c)
+             for i, c in enumerate(cells)]
+    cells = (cells + [""] * 9)[:9]
+    cells[0] = title  # 強制 center 為原始標題
+    category = result.get("category", "其他")
+    boards = _load_boards()
+    center = cells[0]
+    cells_set = frozenset(c for c in cells[1:] if c)
+    for b in boards:
+        if b.get("source") != "ai":
+            continue
+        bc = b.get("cells", [])
+        if bc and bc[0] == center and frozenset(c for c in bc[1:] if c) == cells_set:
+            return {"duplicate": True, "board": b}
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    board = {"id": str(_uuid.uuid4())[:8], "title": title, "cells": cells, "created": now,
+             "updated": now, "source": "ai", "category": category,
+             "source_page": req.source_page, "generated_at": now}
+    boards.append(board)
+    _save_boards(boards)
+    _write_shadow_md(board)
+    return board
+
+@router.post("/mandalart/{board_id}/copy-to-manual")
+async def copy_mandalart_to_manual(board_id: str) -> dict:
+    boards = _load_boards()
+    original = next((b for b in boards if b["id"] == board_id), None)
+    if not original:
+        raise HTTPException(404, "找不到該曼陀羅")
+    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    new_board: dict = {
+        "id": str(_uuid.uuid4())[:8],
+        "title": original["title"],
+        "cells": list(original.get("cells", [""] * 9)),
+        "created": now,
+        "updated": now,
+        "source": "manual",
+        "linked_from_ai": board_id,
+    }
+    boards.append(new_board)
+    _save_boards(boards)
+    _write_shadow_md(new_board)
+    return new_board
 
 @router.get("/mandalart/{board_id}")
 async def get_mandalart(board_id: str) -> dict:
@@ -1136,6 +1927,8 @@ async def update_mandalart(board_id: str, req: MandalartUpdateRequest) -> dict:
                 b["cells"] = (req.cells + [""] * 9)[:9]
             b["updated"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
             _save_boards(boards)
+            _delete_shadow_md(board_id)
+            _write_shadow_md(b)
             return b
     raise HTTPException(404, "找不到該曼陀羅")
 
@@ -1146,6 +1939,7 @@ async def delete_mandalart(board_id: str) -> dict:
     if len(new_boards) == len(boards):
         raise HTTPException(404, "找不到該曼陀羅")
     _save_boards(new_boards)
+    _delete_shadow_md(board_id)
     return {"ok": True}
 
 # ── Tars AI 對話 ────────────────────────────────────────────────────────────

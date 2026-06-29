@@ -12,7 +12,18 @@ interface CardItem {
   excerpt: string;
   inbound_count: number;
   outbound_count: number;
+  mastery?: number;
+  bloom?: string;
 }
+
+const BLOOM_LEVELS_C = ["remember","understand","apply","analyze","evaluate","create"] as const;
+const BLOOM_LABELS_C: Record<string,string> = {
+  remember:"記憶", understand:"理解", apply:"應用", analyze:"分析", evaluate:"評估", create:"創作",
+};
+const BLOOM_COLORS_C: Record<string,string> = {
+  remember:"#94a3b8", understand:"#60a5fa", apply:"#34d399",
+  analyze:"#fbbf24", evaluate:"#f97316", create:"#c084fc",
+};
 
 const TYPE_COLORS: Record<string, { bg: string; color: string; border: string; label: string }> = {
   entity:     { bg: "rgba(96,165,250,0.15)",  color: "#93c5fd", border: "rgba(96,165,250,0.3)",  label: "Entity" },
@@ -31,6 +42,7 @@ export default function WikiCards({ onNavigate }: { onNavigate: (tab: any, path?
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("");
+  const [bloomFilter, setBloomFilter] = useState<string>("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -48,9 +60,11 @@ export default function WikiCards({ onNavigate }: { onNavigate: (tab: any, path?
 
   useEffect(() => { void load(); }, [load]);
 
-  const filtered = search
-    ? cards.filter(c => c.title.toLowerCase().includes(search.toLowerCase()) || c.tags.some(t => t.toLowerCase().includes(search.toLowerCase())))
-    : cards;
+  const filtered = cards.filter(c => {
+    if (bloomFilter && (c.bloom ?? "") !== bloomFilter) return false;
+    if (search) return c.title.toLowerCase().includes(search.toLowerCase()) || c.tags.some(t => t.toLowerCase().includes(search.toLowerCase()));
+    return true;
+  });
 
   const tc = (type: string) => TYPE_COLORS[type] ?? DEFAULT_TYPE;
 
@@ -96,6 +110,20 @@ export default function WikiCards({ onNavigate }: { onNavigate: (tab: any, path?
             </button>
           ))}
         </div>
+      </div>
+      {/* Bloom filter */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: "var(--color-text-tertiary,#888)", flexShrink: 0 }}>布魯姆：</span>
+        <button onClick={() => setBloomFilter("")}
+          style={{ fontSize: 11, padding: "2px 9px", borderRadius: 9999, border: `1px solid ${!bloomFilter ? "rgba(128,128,128,0.5)" : "rgba(128,128,128,0.2)"}`, background: !bloomFilter ? "rgba(128,128,128,0.15)" : "transparent", cursor: "pointer", color: "inherit" }}>全部</button>
+        {BLOOM_LEVELS_C.map(b => (
+          <button key={b} onClick={() => setBloomFilter(bloomFilter === b ? "" : b)}
+            style={{ fontSize: 11, padding: "2px 9px", borderRadius: 9999, cursor: "pointer",
+              border: `1px solid ${bloomFilter === b ? BLOOM_COLORS_C[b] : "rgba(128,128,128,0.2)"}`,
+              background: bloomFilter === b ? `${BLOOM_COLORS_C[b]}22` : "transparent",
+              color: bloomFilter === b ? BLOOM_COLORS_C[b] : "var(--color-text-secondary,#aaa)",
+            }}>{BLOOM_LABELS_C[b]}</button>
+        ))}
       </div>
 
       {loading && <div className="wiki-loading"><RefreshCw style={{ width: 20, height: 20 }} /><span style={{ marginLeft: 8 }}>載入中…</span></div>}

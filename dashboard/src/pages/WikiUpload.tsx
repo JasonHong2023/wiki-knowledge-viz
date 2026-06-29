@@ -21,7 +21,8 @@ interface AnalysisProgress {
 }
 
 const DOC_TYPES = ["auto", "entity", "concept", "comparison", "query"] as const;
-const UPLOAD_TYPES = ["entity", "concept", "comparison", "query"] as const;
+const UPLOAD_TYPES = ["auto", "entity", "concept", "comparison", "query"] as const;
+const TYPE_LABEL: Record<string, string> = { auto: "自動偵測" };
 
 const STEP_LABELS: Record<string, string> = {
   content_extraction: "Content Extraction",
@@ -527,7 +528,7 @@ export default function WikiUpload({ onRefresh }: { onRefresh: () => void }) {
               </label>
               <input
                 type="file"
-                accept=".md,.markdown,.pdf,.pptx,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
+                accept=".md,.markdown,.txt,.pdf,.pptx,.xlsx,.png,.jpg,.jpeg,.gif,.webp"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 className="w-full text-sm"
                 style={{ fontSize: 13 }}
@@ -543,7 +544,7 @@ export default function WikiUpload({ onRefresh }: { onRefresh: () => void }) {
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-text-primary outline-none focus:border-accent"
             >
               {(activeTab === "import-url" ? DOC_TYPES : UPLOAD_TYPES).map((t) => (
-                <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                <option key={t} value={t}>{TYPE_LABEL[t] ?? (t.charAt(0).toUpperCase() + t.slice(1))}</option>
               ))}
             </select>
           </div>

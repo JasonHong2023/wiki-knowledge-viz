@@ -47,17 +47,28 @@ function exportPages(paths: string[], fmt: "html"|"json") {
   window.open(`${PLUGIN}/export?fmt=${fmt}${q}`, "_blank");
 }
 
+const BLOOM_LEVELS = ["remember","understand","apply","analyze","evaluate","create"] as const;
+const BLOOM_LABELS: Record<string,string> = {
+  remember:"記憶", understand:"理解", apply:"應用", analyze:"分析", evaluate:"評估", create:"創作",
+};
+const BLOOM_COLORS: Record<string,string> = {
+  remember:"#94a3b8", understand:"#60a5fa", apply:"#34d399",
+  analyze:"#fbbf24", evaluate:"#f97316", create:"#c084fc",
+};
+
 interface Page {
   path: string; title: string; type: string; tags: string[];
   confidence: string; inbound_link_count: number; updated: string | null;
+  mastery?: number; bloom?: string;
 }
 interface CatNode { id: string; label: string; children: (Page & {id: string})[]; }
 
-function buildTree(pages: Page[], search: string, typeF: string, confF: string): CatNode[] {
+function buildTree(pages: Page[], search: string, typeF: string, confF: string, bloomF: string): CatNode[] {
   const sq = search.toLowerCase();
   const filtered = pages.filter(p => {
     if (typeF && p.type !== typeF) return false;
     if (confF && p.confidence !== confF) return false;
+    if (bloomF && (p.bloom ?? "") !== bloomF) return false;
     if (sq) {
       return p.title.toLowerCase().includes(sq) ||
              p.path.toLowerCase().includes(sq) ||
@@ -101,6 +112,7 @@ export default function WikiIndex({ onRefresh }: { onRefresh: () => void }) {
   const [search, setSearch]   = useState("");
   const [typeF, setTypeF]     = useState("");
   const [confF, setConfF]     = useState("");
+  const [bloomF, setBloomF]   = useState("");
   const [selected, setSelected] = useState<string|null>(null);
   const [deleting, setDeleting] = useState<string|null>(null);
 
@@ -150,7 +162,7 @@ export default function WikiIndex({ onRefresh }: { onRefresh: () => void }) {
   function expandAll()   { setOpen(new Set(tree.map(n => n.id))); }
   function collapseAll() { setOpen(new Set()); }
 
-  const tree = buildTree(pages, search, typeF, confF);
+  const tree = buildTree(pages, search, typeF, confF, bloomF);
   const totalShown = tree.reduce((s, n) => s + n.children.length, 0);
 
   return (
@@ -165,13 +177,6 @@ export default function WikiIndex({ onRefresh }: { onRefresh: () => void }) {
             <span className="wiki-muted">{loading ? "…" : `${totalShown} / ${pages.length}`}</span>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, color: "var(--color-text-tertiary,#888)" }}>匯出：</span>
-            <button className="wiki-btn" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => exportPages([], "html")}>
-              <Download style={{ width: 11, height: 11 }} /> HTML
-            </button>
-            <button className="wiki-btn" style={{ fontSize: 11, padding: "2px 8px" }} onClick={() => exportPages([], "json")}>
-              <Download style={{ width: 11, height: 11 }} /> JSON
-            </button>
             <button className="wiki-btn-ghost" style={{ fontSize: 12, padding: "3px 10px" }} onClick={expandAll}>展開</button>
             <button className="wiki-btn-ghost" style={{ fontSize: 12, padding: "3px 10px" }} onClick={collapseAll}>收合</button>
             <button className="wiki-btn" onClick={() => void load()}><RefreshCw style={{ width: 13, height: 13 }} /></button>
@@ -202,12 +207,28 @@ export default function WikiIndex({ onRefresh }: { onRefresh: () => void }) {
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
-          {(search || typeF || confF) && (
+          {(search || typeF || confF || bloomF) && (
             <button className="wiki-btn-ghost" style={{ fontSize: 12, padding: "3px 8px" }}
-              onClick={() => { setSearch(""); setTypeF(""); setConfF(""); }}>
+              onClick={() => { setSearch(""); setTypeF(""); setConfF(""); setBloomF(""); }}>
               <X style={{ width: 12, height: 12 }} /> 清除
             </button>
           )}
+        </div>
+        {/* Bloom filter pills */}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: "var(--color-text-tertiary,#888)", flexShrink: 0 }}>布魯姆：</span>
+          <button
+            onClick={() => setBloomF("")}
+            style={{ fontSize: 11, padding: "2px 9px", borderRadius: 9999, border: `1px solid ${!bloomF ? "rgba(128,128,128,0.5)" : "rgba(128,128,128,0.2)"}`, background: !bloomF ? "rgba(128,128,128,0.15)" : "transparent", cursor: "pointer", color: "inherit" }}
+          >全部</button>
+          {BLOOM_LEVELS.map(b => (
+            <button key={b} onClick={() => setBloomF(bloomF === b ? "" : b)}
+              style={{ fontSize: 11, padding: "2px 9px", borderRadius: 9999, cursor: "pointer",
+                border: `1px solid ${bloomF === b ? BLOOM_COLORS[b] : "rgba(128,128,128,0.2)"}`,
+                background: bloomF === b ? `${BLOOM_COLORS[b]}22` : "transparent",
+                color: bloomF === b ? BLOOM_COLORS[b] : "var(--color-text-secondary,#aaa)",
+              }}>{BLOOM_LABELS[b]}</button>
+          ))}
         </div>
 
         {loading && <div className="wiki-loading"><RefreshCw style={{ width: 18, height: 18 }} /><span style={{ marginLeft: 8 }}>載入中…</span></div>}
