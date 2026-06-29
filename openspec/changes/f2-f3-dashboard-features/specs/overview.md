@@ -121,6 +121,7 @@ style={{ background: "rgba(99,102,241,0.8)", color: "#fff", padding: "8px 16px" 
 | `dashboard/src/pages/WikiTars.tsx` | 新建 |
 | `dashboard/src/pages/WikiUpload.tsx` | 修復 inline styles |
 | `dashboard/plugin_api.py` | 新增 mandalart CRUD + tars/chat |
+| `dashboard/package.json` | 新增 pptxgenjs + xlsx 依賴 |
 
 ---
 

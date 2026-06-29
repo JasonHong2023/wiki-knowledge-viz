@@ -40,6 +40,11 @@
 - [x] GRID_POS 映射（視覺位置 → 資料索引）
 - [x] 串接 App.tsx（新增 Mandalart tab）
 - [x] 串接 api.ts（wiki.mandalart endpoints）
+- [x] 匯出 Markdown（總覽表格 + 各格詳細章節）
+- [x] 匯出 PNG（Canvas 手繪，暗色主題）
+- [x] 匯出 PPTX（pptxgenjs，單頁可編輯投影片）
+- [x] 匯出 XLSX（SheetJS，3×3 可編輯試算表）
+- [x] 匯出 ▼ 下拉選單（含外點關閉）
 
 ## F3 #15 — Tars AI 對話助手
 

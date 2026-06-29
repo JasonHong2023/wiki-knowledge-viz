@@ -142,7 +142,7 @@
 
 - **F2 #12** Hypercard 卡片視圖（Cards tab，格狀卡片、搜尋、類型篩選、展開詳情）✅
 - **F2 #13** Luhmann 編號索引（Pages tab，可展開/收合分類樹，搜尋，Luhmann ID，合併舊 WikiPageList）✅
-- **F3 #14** iMandalart 九宮格（Mandalart tab，可建立多個看板、點格子編輯）✅
+- **F3 #14** iMandalart 九宮格（Mandalart tab，可建立多個看板、點格子編輯、匯出 MD/PNG/PPTX/XLSX）✅
 - **F3 #15** Tars AI 對話助手（Tars tab，wiki RAG 關鍵字檢索、LLM 回答、來源頁面引用、語言選擇）✅
 - **UX** Upload tab / BatchImport 按鈕文字不可見問題（Tailwind 在 plugin bundle 無效）✅
 - **UX** Pages tab 側邊欄預設開啟最新頁面、點擊不再切換關閉 ✅
