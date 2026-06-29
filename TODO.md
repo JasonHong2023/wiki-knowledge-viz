@@ -92,13 +92,82 @@
 
 ---
 
+## 🔵 F1 — 新功能：高價值（直接延伸現有架構）
+
+### 9. H 強化 — 關鍵字權重知識圖譜
+**來源：** Hermes.md 功能圖 — H. Keyword Graph View  
+**現況：** 圖只有 wikilink 連結，沒有權重差異。  
+**目標：**
+- 節點大小 = 被引用次數（越多人連到越大）
+- 連線粗細 = 兩頁面共享標籤數量
+- 視覺化快速判斷哪些頁面最重要
+
+實作範圍：`WikiGraph.tsx`（前端）+ `/graph` API 回傳加上 `weight` 欄位（後端）
+
+### 10. B — FIRE 四向表格生成
+**來源：** Hermes.md 功能圖 — B. FIRE（Fact / Index / Relation / Encyclopedia）  
+**現況：** 有標籤分類和 wikilink 關聯，但無結構化四向表格。  
+**目標：** 對任一頁面自動生成 FIRE 摘要表，協助對文本做出向量分析方向的整理。
+
+實作範圍：新增 `plugin_api.py` 的 `/pages/{path}/fire` endpoint + 新前端元件
+
+### 11. E — Publish 匯出（HTML 優先）
+**來源：** Hermes.md 功能圖 — E. Publish  
+**現況：** 只能在 wiki 內瀏覽，無法匯出。  
+**目標：**
+- 選取頁面匯出為靜態 HTML（最先做）
+- JSON bundle 匯出（供其他工具使用）
+- PPT / EPUB（後期）
+
+實作範圍：後端新增 `/export` endpoint + 前端匯出按鈕
+
+---
+
+## 🟣 F2 — 新功能：中價值（需要新 UI）
+
+### 12. C — Hypercard 卡片視圖
+**來源：** Hermes.md 功能圖 — C. Hypercard  
+**目標：** 每篇文章自動轉成手機友善的單張永久卡片（約 300 字）
+- 包含：標題 + 摘要 + 大綱（三段式）
+- 適合快速瀏覽和行動裝置閱讀
+
+實作範圍：新增 `WikiCard.tsx` 頁面 + 後端 `/pages/{path}/card` summary API
+
+### 13. F — Luhmann 編號索引
+**來源：** Hermes.md 功能圖 — F. Lumann（Luhmann Zettelkasten）  
+**目標：** BIRD 編號原則，對知識庫建立可導覽的階層索引
+- 按書籍/章節/關鍵字/人名層級自動編號
+- 適合書籍、課程類型的 wiki 內容
+
+實作範圍：設計編號規則 + 後端索引 API + 前端索引樹狀視圖
+
+---
+
+## ⬛ F3 — 新功能：低優先（架構差異大）
+
+### 14. A — iMandalart 九宮格思維導圖
+**來源：** Hermes.md 功能圖 — A. iMandalart  
+**目標：** 純文字九宮格，可插入 Todo 和大綱  
+**限制：** 需要全新的格狀編輯介面，與現有 wiki 架構差異最大。
+
+### 15. D — Tars AI 對話夥伴
+**來源：** Hermes.md 功能圖 — D. Tars  
+**目標：** 與 wiki 內容對話、能指揮其他 Agents  
+**限制：** 屬於 Hermes Agent 層，不是 wiki plugin 層，需要跨系統整合。
+
+---
+
 ## 處理順序摘要
 
 ```
-P0 → P1(#2) → P1(#3) → P2(#4) → P2(#5) → P2(#6) → P3(#7) → P3(#8)
+技術債優先，再接新功能：
+
+P0 → P1(#2,3) → P2(#4,5,6) → P3(#7,8)
+  → F1(#9,10,11) → F2(#12,13) → F3(#14,15)
 
 立即：刪死碼
 近期：模組相依說明 + 開發流程文件
 中期：hot reload + refresh context + 設計一致性
 長期：plugin 系統風險追蹤
+新功能：關鍵字權重圖 → FIRE 表格 → HTML 匯出 → Hypercard → Luhmann 索引
 ```
